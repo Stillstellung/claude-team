@@ -366,6 +366,7 @@ async def spawn_session(
             profile_customizations.set_badge_text(badge_text)
 
         # Create iTerm2 session based on layout
+        layout_info = {"layout_used": layout}  # Default, may be updated below
         if layout == "new_window":
             # Create a new window with profile customizations
             window = await create_window(
