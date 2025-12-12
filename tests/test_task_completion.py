@@ -11,6 +11,7 @@ from claude_team_mcp.task_completion import (
     TaskContext,
     detect_markers_in_message,
     detect_from_conversation,
+    detect_from_screen,
     COMPLETION_MARKERS,
     FAILURE_MARKERS,
 )
@@ -187,3 +188,121 @@ class TestTaskCompletionInfo:
         assert result["confidence"] == 0.95
         assert result["detection_method"] == "convention_markers"
         assert "detected_at" in result
+
+
+class TestScreenDetection:
+    """Test screen-based completion detection."""
+
+    def test_screen_convention_marker_completion(self):
+        """Test that TASK_COMPLETE on screen is detected with high confidence."""
+        import asyncio
+
+        async def mock_read_screen(_session):
+            return "Some output\nMore output\nTASK_COMPLETE\n> "
+
+        async def run_test():
+            return await detect_from_screen(None, mock_read_screen)
+
+        result = asyncio.run(run_test())
+        assert result is not None
+        assert result.status == TaskStatus.COMPLETED
+        assert result.confidence >= 0.9
+        assert result.detection_method == "screen_convention_marker"
+        assert result.details["matched_marker"] == "TASK_COMPLETE"
+
+    def test_screen_convention_marker_failure(self):
+        """Test that TASK_FAILED on screen is detected with high confidence."""
+        import asyncio
+
+        async def mock_read_screen(_session):
+            return "Error occurred\nTASK_FAILED\n> "
+
+        async def run_test():
+            return await detect_from_screen(None, mock_read_screen)
+
+        result = asyncio.run(run_test())
+        assert result is not None
+        assert result.status == TaskStatus.FAILED
+        assert result.confidence >= 0.9
+        assert result.detection_method == "screen_convention_marker"
+        assert result.details["matched_marker"] == "TASK_FAILED"
+
+    def test_screen_all_completion_markers(self):
+        """Test all completion markers are detected on screen with high confidence."""
+        import asyncio
+
+        for marker in COMPLETION_MARKERS:
+            async def mock_read_screen(_session, m=marker):
+                return f"Output\n{m}\n> "
+
+            async def run_test():
+                return await detect_from_screen(None, mock_read_screen)
+
+            result = asyncio.run(run_test())
+            assert result is not None, f"Failed for marker: {marker}"
+            assert result.status == TaskStatus.COMPLETED, f"Failed for marker: {marker}"
+            assert result.confidence >= 0.9, f"Low confidence for marker: {marker}"
+            assert result.detection_method == "screen_convention_marker"
+
+    def test_screen_all_failure_markers(self):
+        """Test all failure markers are detected on screen with high confidence."""
+        import asyncio
+
+        for marker in FAILURE_MARKERS:
+            async def mock_read_screen(_session, m=marker):
+                return f"Output\n{m}\n> "
+
+            async def run_test():
+                return await detect_from_screen(None, mock_read_screen)
+
+            result = asyncio.run(run_test())
+            assert result is not None, f"Failed for marker: {marker}"
+            assert result.status == TaskStatus.FAILED, f"Failed for marker: {marker}"
+            assert result.confidence >= 0.9, f"Low confidence for marker: {marker}"
+            assert result.detection_method == "screen_convention_marker"
+
+    def test_screen_generic_patterns_lower_confidence(self):
+        """Test that generic patterns like 'done' have lower confidence."""
+        import asyncio
+
+        async def mock_read_screen(_session):
+            return "Build succeeded\ndone\n> "
+
+        async def run_test():
+            return await detect_from_screen(None, mock_read_screen)
+
+        result = asyncio.run(run_test())
+        assert result is not None
+        assert result.status == TaskStatus.COMPLETED
+        # Generic patterns should have lower confidence than convention markers
+        assert result.confidence < 0.9
+        assert result.detection_method == "screen_parsing"
+
+    def test_screen_no_markers(self):
+        """Test no detection when screen has no markers."""
+        import asyncio
+
+        async def mock_read_screen(_session):
+            return "Working on it...\nMaking changes...\n> "
+
+        async def run_test():
+            return await detect_from_screen(None, mock_read_screen)
+
+        result = asyncio.run(run_test())
+        assert result is None
+
+    def test_screen_failure_marker_priority_over_completion(self):
+        """Test that failure markers are checked before completion markers."""
+        import asyncio
+
+        async def mock_read_screen(_session):
+            # TASK_FAILED should be detected even if success patterns present
+            return "Build passed\nTASK_FAILED\n> "
+
+        async def run_test():
+            return await detect_from_screen(None, mock_read_screen)
+
+        result = asyncio.run(run_test())
+        assert result is not None
+        assert result.status == TaskStatus.FAILED
+        assert result.confidence >= 0.9
