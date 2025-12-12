@@ -63,9 +63,9 @@ def generate_tab_color(
 
     # iterm2.Color expects integer RGB values 0-255
     return iterm2.Color(
-        red=int(r * 255),
-        green=int(g * 255),
-        blue=int(b * 255),
+        r=int(r * 255),
+        g=int(g * 255),
+        b=int(b * 255),
     )
 
 
