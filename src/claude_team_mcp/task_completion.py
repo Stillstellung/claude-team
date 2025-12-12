@@ -370,6 +370,10 @@ async def detect_from_screen(
     """
     Analyze terminal screen content for completion signals.
 
+    Checks for explicit convention markers (TASK_COMPLETE, TASK_FAILED) first
+    with high confidence, then falls back to generic patterns with lower
+    confidence.
+
     Args:
         iterm_session: iTerm2 session object
         read_screen_func: Function to read screen text
@@ -384,7 +388,33 @@ async def detect_from_screen(
         lines = [l.strip() for l in screen_text.split("\n") if l.strip()]
         recent_text = "\n".join(lines[-20:])  # Last 20 non-empty lines
 
-        # Check for failure patterns first
+        # Check for explicit convention markers FIRST (highest priority, high confidence)
+        # These are the same markers used in conversation detection
+        for marker in FAILURE_MARKERS:
+            if marker in recent_text:
+                return TaskCompletionInfo(
+                    status=TaskStatus.FAILED,
+                    confidence=0.95,
+                    detection_method="screen_convention_marker",
+                    details={
+                        "matched_marker": marker,
+                        "screen_preview": "\n".join(lines[-5:]),
+                    },
+                )
+
+        for marker in COMPLETION_MARKERS:
+            if marker in recent_text:
+                return TaskCompletionInfo(
+                    status=TaskStatus.COMPLETED,
+                    confidence=0.95,
+                    detection_method="screen_convention_marker",
+                    details={
+                        "matched_marker": marker,
+                        "screen_preview": "\n".join(lines[-5:]),
+                    },
+                )
+
+        # Fall back to generic failure patterns (lower confidence)
         for pattern in SCREEN_FAILURE_PATTERNS:
             if re.search(pattern, recent_text):
                 return TaskCompletionInfo(
@@ -397,7 +427,7 @@ async def detect_from_screen(
                     },
                 )
 
-        # Check for completion patterns
+        # Fall back to generic completion patterns (lower confidence)
         for pattern in SCREEN_COMPLETION_PATTERNS:
             if re.search(pattern, recent_text):
                 return TaskCompletionInfo(
