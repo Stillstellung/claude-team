@@ -45,6 +45,81 @@ logger = logging.getLogger("claude-team-mcp")
 
 
 # =============================================================================
+# Error Response Helpers
+# =============================================================================
+
+
+def error_response(
+    message: str,
+    hint: str | None = None,
+    **extra_fields,
+) -> dict:
+    """
+    Create a standardized error response with optional recovery hint.
+
+    Args:
+        message: The error message describing what went wrong
+        hint: Actionable instructions for recovery (optional)
+        **extra_fields: Additional fields to include in the response
+
+    Returns:
+        Dict with 'error', optional 'hint', and any extra fields
+    """
+    result = {"error": message}
+    if hint:
+        result["hint"] = hint
+    result.update(extra_fields)
+    return result
+
+
+# Common hints for reusable error scenarios
+HINTS = {
+    "session_not_found": (
+        "Run list_sessions to see available sessions, or discover_sessions "
+        "to find orphaned iTerm2 sessions that can be imported"
+    ),
+    "project_path_missing": (
+        "Verify the path exists. For git worktrees, check 'git worktree list'. "
+        "Use an absolute path like '/Users/name/project'"
+    ),
+    "iterm_connection": (
+        "Ensure iTerm2 is running and Python API is enabled: "
+        "iTerm2 → Preferences → General → Magic → Enable Python API"
+    ),
+    "registry_empty": (
+        "No sessions are being managed. Use spawn_session to create a new session, "
+        "or discover_sessions to find existing Claude sessions in iTerm2"
+    ),
+    "split_session_not_found": (
+        "The split_from_session ID was not found. Run list_sessions to see "
+        "available sessions to split from, or omit split_from_session to "
+        "split from the currently active iTerm window"
+    ),
+    "no_jsonl_file": (
+        "Claude may not have started yet or the session file doesn't exist. "
+        "Wait a few seconds and try again, or check that Claude Code started "
+        "successfully in the terminal"
+    ),
+    "session_closed": (
+        "This session has been closed. Use spawn_session to create a new one, "
+        "or list_sessions to find other active sessions"
+    ),
+    "no_active_task": (
+        "No task is being tracked for this session. Use send_message with "
+        "track_task=True to start tracking a task for completion detection"
+    ),
+    "project_path_detection_failed": (
+        "Could not auto-detect project path from terminal. Provide project_path "
+        "explicitly when calling import_session"
+    ),
+    "session_busy": (
+        "The session is currently processing. Wait for it to finish, or use "
+        "force=True to close it anyway (may lose work)"
+    ),
+}
+
+
+# =============================================================================
 # Worktree Detection
 # =============================================================================
 
@@ -237,7 +312,10 @@ async def spawn_session(
     # Validate project path
     resolved_path = os.path.abspath(os.path.expanduser(project_path))
     if not os.path.isdir(resolved_path):
-        return {"error": f"Project path does not exist: {resolved_path}"}
+        return error_response(
+            f"Project path does not exist: {resolved_path}",
+            hint=HINTS["project_path_missing"],
+        )
 
     try:
         # Create iTerm2 session based on layout
@@ -253,7 +331,10 @@ async def spawn_session(
                 # Split from a specific managed session
                 source_session = registry.get(split_from_session)
                 if not source_session:
-                    return {"error": f"split_from_session not found: {split_from_session}"}
+                    return error_response(
+                        f"split_from_session not found: {split_from_session}",
+                        hint=HINTS["split_session_not_found"],
+                    )
                 iterm_session = await split_pane(source_session.iterm_session, vertical=vertical)
             else:
                 # Split the current window's active session (original behavior)
@@ -266,7 +347,10 @@ async def spawn_session(
                     current_session = current_window.current_tab.current_session
                     iterm_session = await split_pane(current_session, vertical=vertical)
         else:
-            return {"error": f"Invalid layout: {layout}. Use: new_window, split_vertical, split_horizontal"}
+            return error_response(
+                f"Invalid layout: {layout}",
+                hint="Valid layouts are: new_window, split_vertical, split_horizontal",
+            )
 
         # Register the session before starting Claude (so we track it even if startup fails)
         managed = registry.add(
@@ -301,7 +385,10 @@ async def spawn_session(
 
     except Exception as e:
         logger.error(f"Failed to spawn session: {e}")
-        return {"error": str(e)}
+        return error_response(
+            str(e),
+            hint=HINTS["iterm_connection"],
+        )
 
 
 @mcp.tool()
@@ -350,20 +437,20 @@ async def spawn_team(
 
     # Validate layout
     if layout not in LAYOUT_PANE_NAMES:
-        return {
-            "error": f"Invalid layout: {layout}. "
-            f"Valid layouts: {list(LAYOUT_PANE_NAMES.keys())}"
-        }
+        return error_response(
+            f"Invalid layout: {layout}",
+            hint=f"Valid layouts are: {', '.join(LAYOUT_PANE_NAMES.keys())}",
+        )
 
     # Validate pane names
     expected_panes = set(LAYOUT_PANE_NAMES[layout])
     provided_panes = set(projects.keys())
     if not provided_panes.issubset(expected_panes):
         invalid = provided_panes - expected_panes
-        return {
-            "error": f"Invalid pane names for layout '{layout}': {list(invalid)}. "
-            f"Valid names: {list(expected_panes)}"
-        }
+        return error_response(
+            f"Invalid pane names for layout '{layout}': {list(invalid)}",
+            hint=f"Valid pane names for '{layout}' are: {', '.join(expected_panes)}",
+        )
 
     # Validate all project paths exist and detect worktrees
     resolved_projects = {}
@@ -371,7 +458,10 @@ async def spawn_team(
     for pane_name, project_path in projects.items():
         resolved = os.path.abspath(os.path.expanduser(project_path))
         if not os.path.isdir(resolved):
-            return {"error": f"Project path does not exist for '{pane_name}': {resolved}"}
+            return error_response(
+                f"Project path does not exist for '{pane_name}': {resolved}",
+                hint=HINTS["project_path_missing"],
+            )
         resolved_projects[pane_name] = resolved
 
         # Check for worktree and set BEADS_DIR if needed
@@ -419,10 +509,13 @@ async def spawn_team(
     except ValueError as e:
         # Layout or pane name validation errors from the primitive
         logger.error(f"Validation error in spawn_team: {e}")
-        return {"error": str(e)}
+        return error_response(str(e))
     except Exception as e:
         logger.error(f"Failed to spawn team: {e}")
-        return {"error": str(e)}
+        return error_response(
+            str(e),
+            hint=HINTS["iterm_connection"],
+        )
 
 
 @mcp.tool()
@@ -451,7 +544,11 @@ async def list_sessions(
             status = SessionStatus(status_filter)
             sessions = registry.list_by_status(status)
         except ValueError:
-            return [{"error": f"Invalid status filter: {status_filter}"}]
+            valid_statuses = [s.value for s in SessionStatus]
+            return [error_response(
+                f"Invalid status filter: {status_filter}",
+                hint=f"Valid statuses are: {', '.join(valid_statuses)}",
+            )]
     else:
         sessions = registry.list_all()
 
@@ -506,11 +603,17 @@ async def send_message(
     # Look up session
     session = registry.get(session_id)
     if not session:
-        return {"error": f"Session not found: {session_id}"}
+        return error_response(
+            f"Session not found: {session_id}",
+            hint=HINTS["session_not_found"],
+        )
 
     # Check session is ready
     if session.status == SessionStatus.CLOSED:
-        return {"error": f"Session is closed: {session_id}"}
+        return error_response(
+            f"Session is closed: {session_id}",
+            hint=HINTS["session_closed"],
+        )
 
     try:
         # Update status to busy
@@ -579,7 +682,11 @@ async def send_message(
     except Exception as e:
         logger.error(f"Failed to send message: {e}")
         registry.update_status(session_id, SessionStatus.READY)
-        return {"error": str(e), "session_id": session_id}
+        return error_response(
+            str(e),
+            hint=HINTS["iterm_connection"],
+            session_id=session_id,
+        )
 
 
 @mcp.tool()
@@ -616,7 +723,10 @@ async def broadcast_message(
     registry = app_ctx.registry
 
     if not session_ids:
-        return {"error": "No session_ids provided"}
+        return error_response(
+            "No session_ids provided",
+            hint=HINTS["registry_empty"],
+        )
 
     # Validate all sessions exist first
     # (fail fast if any session is invalid)
@@ -637,10 +747,18 @@ async def broadcast_message(
     results = {}
 
     for sid in missing_sessions:
-        results[sid] = {"error": f"Session not found: {sid}", "success": False}
+        results[sid] = error_response(
+            f"Session not found: {sid}",
+            hint=HINTS["session_not_found"],
+            success=False,
+        )
 
     for sid in closed_sessions:
-        results[sid] = {"error": f"Session is closed: {sid}", "success": False}
+        results[sid] = error_response(
+            f"Session is closed: {sid}",
+            hint=HINTS["session_closed"],
+            success=False,
+        )
 
     if not valid_sessions:
         return {
@@ -648,7 +766,10 @@ async def broadcast_message(
             "success_count": 0,
             "failure_count": len(results),
             "total": len(session_ids),
-            "error": "No valid sessions to send to",
+            **error_response(
+                "No valid sessions to send to",
+                hint=HINTS["session_not_found"],
+            ),
         }
 
     async def send_to_session(sid: str, session) -> tuple[str, dict]:
@@ -706,7 +827,12 @@ async def broadcast_message(
         except Exception as e:
             logger.error(f"Failed to send message to {sid}: {e}")
             registry.update_status(sid, SessionStatus.READY)
-            return (sid, {"error": str(e), "session_id": sid, "success": False})
+            return (sid, error_response(
+                str(e),
+                hint=HINTS["iterm_connection"],
+                session_id=sid,
+                success=False,
+            ))
 
     # Send to all valid sessions in parallel
     tasks = [send_to_session(sid, session) for sid, session in valid_sessions]
@@ -763,24 +889,29 @@ async def get_response(
     # Look up session
     session = registry.get(session_id)
     if not session:
-        return {"error": f"Session not found: {session_id}"}
+        return error_response(
+            f"Session not found: {session_id}",
+            hint=HINTS["session_not_found"],
+        )
 
     jsonl_path = session.get_jsonl_path()
     if not jsonl_path or not jsonl_path.exists():
-        return {
-            "session_id": session_id,
-            "status": session.status.value,
-            "error": "No JSONL session file found - Claude may not have started yet",
-        }
+        return error_response(
+            "No JSONL session file found - Claude may not have started yet",
+            hint=HINTS["no_jsonl_file"],
+            session_id=session_id,
+            status=session.status.value,
+        )
 
     # Get current state
     state = session.get_conversation_state()
     if not state:
-        return {
-            "session_id": session_id,
-            "status": session.status.value,
-            "error": "Could not parse session state",
-        }
+        return error_response(
+            "Could not parse session state",
+            hint="The JSONL file may be corrupted. Try closing and spawning a new session",
+            session_id=session_id,
+            status=session.status.value,
+        )
 
     # If wait=True and session appears to be processing, wait for idle
     if wait and state.is_processing:
@@ -834,7 +965,10 @@ async def get_session_status(
     # Look up session
     session = registry.get(session_id)
     if not session:
-        return {"error": f"Session not found: {session_id}"}
+        return error_response(
+            f"Session not found: {session_id}",
+            hint=HINTS["session_not_found"],
+        )
 
     result = session.to_dict()
 
@@ -1061,7 +1195,10 @@ async def import_session(
             break
 
     if not target_session:
-        return {"error": f"iTerm2 session not found: {iterm_session_id}"}
+        return error_response(
+            f"iTerm2 session not found: {iterm_session_id}",
+            hint="Run discover_sessions to scan for active Claude sessions in iTerm2",
+        )
 
     # If project_path not provided, try to detect it
     if not project_path:
@@ -1086,14 +1223,18 @@ async def import_session(
             logger.warning(f"Could not detect project path: {e}")
 
     if not project_path:
-        return {
-            "error": "Could not detect project path. Please provide project_path explicitly.",
-            "iterm_session_id": iterm_session_id,
-        }
+        return error_response(
+            "Could not detect project path from terminal",
+            hint=HINTS["project_path_detection_failed"],
+            iterm_session_id=iterm_session_id,
+        )
 
     # Validate project path exists
     if not os.path.isdir(project_path):
-        return {"error": f"Project path does not exist: {project_path}"}
+        return error_response(
+            f"Project path does not exist: {project_path}",
+            hint=HINTS["project_path_missing"],
+        )
 
     # Register the session
     managed = registry.add(
@@ -1142,15 +1283,19 @@ async def close_session(
     # Look up session
     session = registry.get(session_id)
     if not session:
-        return {"error": f"Session not found: {session_id}"}
+        return error_response(
+            f"Session not found: {session_id}",
+            hint=HINTS["session_not_found"],
+        )
 
     # Check if busy
     if session.status == SessionStatus.BUSY and not force:
-        return {
-            "error": f"Session is busy. Use force=True to close anyway.",
-            "session_id": session_id,
-            "status": session.status.value,
-        }
+        return error_response(
+            "Session is busy",
+            hint=HINTS["session_busy"],
+            session_id=session_id,
+            status=session.status.value,
+        )
 
     try:
         # Send Ctrl+C to interrupt any running operation
@@ -1231,16 +1376,20 @@ async def get_task_status(
     # Look up session
     session = registry.get(session_id)
     if not session:
-        return {"error": f"Session not found: {session_id}"}
+        return error_response(
+            f"Session not found: {session_id}",
+            hint=HINTS["session_not_found"],
+        )
 
     # Check if there's an active task
     if not session.current_task:
-        return {
-            "session_id": session_id,
-            "has_active_task": False,
-            "status": TaskStatus.UNKNOWN.value,
-            "message": "No active task being tracked. Use send_message with track_task=True.",
-        }
+        return error_response(
+            "No active task being tracked",
+            hint=HINTS["no_active_task"],
+            session_id=session_id,
+            has_active_task=False,
+            status=TaskStatus.UNKNOWN.value,
+        )
 
     # Build task context
     task_ctx = TaskContext(
@@ -1333,24 +1482,29 @@ async def wait_for_completion(
     # Look up session
     session = registry.get(session_id)
     if not session:
-        return {"error": f"Session not found: {session_id}"}
+        return error_response(
+            f"Session not found: {session_id}",
+            hint=HINTS["session_not_found"],
+        )
 
     # Check if there's an active task
     if not session.current_task:
-        return {
-            "session_id": session_id,
-            "has_active_task": False,
-            "status": TaskStatus.UNKNOWN.value,
-            "message": "No active task being tracked. Use send_message with track_task=True first.",
-        }
+        return error_response(
+            "No active task being tracked",
+            hint=HINTS["no_active_task"],
+            session_id=session_id,
+            has_active_task=False,
+            status=TaskStatus.UNKNOWN.value,
+        )
 
     # Get JSONL path
     jsonl_path = session.get_jsonl_path()
     if not jsonl_path:
-        return {
-            "session_id": session_id,
-            "error": "No JSONL session file found - cannot track conversation state",
-        }
+        return error_response(
+            "No JSONL session file found - cannot track conversation state",
+            hint=HINTS["no_jsonl_file"],
+            session_id=session_id,
+        )
 
     # Build task context
     task_ctx = TaskContext(
@@ -1415,7 +1569,10 @@ async def cancel_task(
     # Look up session
     session = registry.get(session_id)
     if not session:
-        return {"error": f"Session not found: {session_id}"}
+        return error_response(
+            f"Session not found: {session_id}",
+            hint=HINTS["session_not_found"],
+        )
 
     if not session.current_task:
         return {
@@ -1489,7 +1646,10 @@ async def resource_session_status(
 
     session = registry.get(session_id)
     if not session:
-        return {"error": f"Session not found: {session_id}"}
+        return error_response(
+            f"Session not found: {session_id}",
+            hint=HINTS["session_not_found"],
+        )
 
     result = session.to_dict()
 
@@ -1542,7 +1702,10 @@ async def resource_session_screen(
 
     session = registry.get(session_id)
     if not session:
-        return {"error": f"Session not found: {session_id}"}
+        return error_response(
+            f"Session not found: {session_id}",
+            hint=HINTS["session_not_found"],
+        )
 
     try:
         screen_text = await read_screen_text(session.iterm_session)
@@ -1557,11 +1720,12 @@ async def resource_session_screen(
             "is_responsive": True,
         }
     except Exception as e:
-        return {
-            "session_id": session_id,
-            "error": f"Could not read screen: {e}",
-            "is_responsive": False,
-        }
+        return error_response(
+            f"Could not read screen: {e}",
+            hint=HINTS["iterm_connection"],
+            session_id=session_id,
+            is_responsive=False,
+        )
 
 
 # =============================================================================
