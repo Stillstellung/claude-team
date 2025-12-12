@@ -910,6 +910,132 @@ async def close_session(
 
 
 # =============================================================================
+# MCP Resources
+# =============================================================================
+
+
+@mcp.resource("sessions://list")
+async def resource_sessions(ctx: Context[ServerSession, AppContext]) -> list[dict]:
+    """
+    List all managed Claude Code sessions.
+
+    Returns a list of session summaries including ID, name, project path,
+    status, and conversation stats if available. This is a read-only
+    resource alternative to the list_sessions tool.
+    """
+    app_ctx = ctx.request_context.lifespan_context
+    registry = app_ctx.registry
+
+    sessions = registry.list_all()
+    results = []
+
+    for session in sessions:
+        info = session.to_dict()
+        # Add conversation stats if JSONL is available
+        state = session.get_conversation_state()
+        if state:
+            info["message_count"] = state.message_count
+            info["is_processing"] = state.is_processing
+        results.append(info)
+
+    return results
+
+
+@mcp.resource("sessions://{session_id}/status")
+async def resource_session_status(
+    session_id: str, ctx: Context[ServerSession, AppContext]
+) -> dict:
+    """
+    Get detailed status of a specific Claude Code session.
+
+    Returns comprehensive information including session metadata,
+    conversation statistics, and processing state. Use the /screen
+    resource to get terminal screen content.
+
+    Args:
+        session_id: ID of the target session
+    """
+    app_ctx = ctx.request_context.lifespan_context
+    registry = app_ctx.registry
+
+    session = registry.get(session_id)
+    if not session:
+        return {"error": f"Session not found: {session_id}"}
+
+    result = session.to_dict()
+
+    # Get conversation stats from JSONL
+    state = session.get_conversation_state()
+    if state:
+        user_msgs = [m for m in state.messages if m.role == "user"]
+        assistant_msgs = [m for m in state.messages if m.role == "assistant"]
+
+        result["conversation_stats"] = {
+            "total_messages": len(state.messages),
+            "user_messages": len(user_msgs),
+            "assistant_messages": len(assistant_msgs),
+            "last_user_prompt": (
+                user_msgs[-1].content[:200] + "..."
+                if user_msgs and len(user_msgs[-1].content) > 200
+                else (user_msgs[-1].content if user_msgs else None)
+            ),
+            "last_assistant_preview": (
+                assistant_msgs[-1].content[:200] + "..."
+                if assistant_msgs and len(assistant_msgs[-1].content) > 200
+                else (assistant_msgs[-1].content if assistant_msgs else None)
+            ),
+        }
+        result["is_processing"] = state.is_processing
+        result["message_count"] = state.message_count
+    else:
+        result["conversation_stats"] = None
+        result["is_processing"] = None
+        result["message_count"] = 0
+
+    return result
+
+
+@mcp.resource("sessions://{session_id}/screen")
+async def resource_session_screen(
+    session_id: str, ctx: Context[ServerSession, AppContext]
+) -> dict:
+    """
+    Get the current terminal screen content for a session.
+
+    Returns the visible text in the iTerm2 pane for the specified session.
+    Useful for checking what Claude is currently displaying or doing.
+
+    Args:
+        session_id: ID of the target session
+    """
+    app_ctx = ctx.request_context.lifespan_context
+    registry = app_ctx.registry
+
+    session = registry.get(session_id)
+    if not session:
+        return {"error": f"Session not found: {session_id}"}
+
+    try:
+        screen_text = await read_screen_text(session.iterm_session)
+        # Get non-empty lines
+        lines = [line for line in screen_text.split("\n") if line.strip()]
+
+        return {
+            "session_id": session_id,
+            "screen_content": screen_text,
+            "screen_preview": "\n".join(lines[-15:]) if lines else "",
+            "line_count": len(lines),
+            "is_responsive": True,
+        }
+    except Exception as e:
+        return {
+            "session_id": session_id,
+            "error": f"Could not read screen: {e}",
+            "is_responsive": False,
+        }
+
+
+# =============================================================================
 # Server Entry Point
 # =============================================================================
 
