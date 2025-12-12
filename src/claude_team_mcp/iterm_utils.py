@@ -172,6 +172,7 @@ async def start_claude_in_session(
     project_path: str,
     resume_session: Optional[str] = None,
     wait_seconds: float = 3.0,
+    dangerously_skip_permissions: bool = False,
 ) -> None:
     """
     Start Claude Code in an existing iTerm2 session.
@@ -183,6 +184,7 @@ async def start_claude_in_session(
         project_path: Directory to run Claude in
         resume_session: Optional session ID to resume
         wait_seconds: Time to wait for Claude to initialize
+        dangerously_skip_permissions: If True, start with --dangerously-skip-permissions
     """
     import asyncio
 
@@ -192,6 +194,8 @@ async def start_claude_in_session(
 
     # Build and run claude command
     cmd = "claude"
+    if dangerously_skip_permissions:
+        cmd += " --dangerously-skip-permissions"
     if resume_session:
         cmd += f" --resume {resume_session}"
     await send_prompt(session, cmd)

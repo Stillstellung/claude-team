@@ -127,6 +127,7 @@ async def spawn_session(
     project_path: str,
     session_name: str | None = None,
     layout: str = "new_window",
+    skip_permissions: bool = False,
 ) -> dict:
     """
     Spawn a new Claude Code session in iTerm2.
@@ -138,6 +139,7 @@ async def spawn_session(
         project_path: Directory where Claude Code should run
         session_name: Optional friendly name for the session
         layout: How to create the session - "new_window", "split_vertical", or "split_horizontal"
+        skip_permissions: If True, start Claude with --dangerously-skip-permissions flag
 
     Returns:
         Dict with session_id, status, and project_path
@@ -184,6 +186,7 @@ async def spawn_session(
             session=iterm_session,
             project_path=resolved_path,
             wait_seconds=4.0,
+            dangerously_skip_permissions=skip_permissions,
         )
 
         # Try to discover the Claude session ID from JSONL
