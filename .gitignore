@@ -47,3 +47,6 @@ htmlcov/
 # Local environment
 .env
 .env.local
+
+# Git worktrees (internal)
+.worktrees/
