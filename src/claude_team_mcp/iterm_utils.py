@@ -192,6 +192,83 @@ async def close_pane(session: "iterm2.Session", force: bool = False) -> bool:
 
 
 # =============================================================================
+# Shell Readiness Detection
+# =============================================================================
+
+# Common shell prompt endings that indicate the shell is ready for input.
+# These appear at the end of the last non-empty line when shell is idle.
+SHELL_PROMPT_PATTERNS = ['$ ', '% ', '> ', '# ', '❯ ', '➜ ']
+
+
+async def wait_for_shell_ready(
+    session: "iterm2.Session",
+    timeout_seconds: float = 10.0,
+    poll_interval: float = 0.1,
+    stable_count: int = 2,
+) -> bool:
+    """
+    Wait for the shell to be ready to accept input.
+
+    Polls the screen content and waits for a stable shell prompt to appear.
+    A prompt is considered "stable" when the screen content hasn't changed
+    for `stable_count` consecutive polls AND ends with a recognized prompt.
+
+    Args:
+        session: iTerm2 session to monitor
+        timeout_seconds: Maximum time to wait for shell readiness
+        poll_interval: Time between screen content checks
+        stable_count: Number of consecutive stable reads before considering ready
+
+    Returns:
+        True if shell became ready, False if timeout was reached
+    """
+    import asyncio
+    import time
+
+    start_time = time.monotonic()
+    last_content = None
+    stable_reads = 0
+
+    while (time.monotonic() - start_time) < timeout_seconds:
+        try:
+            content = await read_screen_text(session)
+
+            # Find the last non-empty line (the prompt line)
+            lines = content.rstrip().split('\n')
+            last_line = ''
+            for line in reversed(lines):
+                stripped = line.rstrip()
+                if stripped:
+                    last_line = stripped
+                    break
+
+            # Check if content is stable (same as last read)
+            if content == last_content:
+                stable_reads += 1
+            else:
+                stable_reads = 0
+                last_content = content
+
+            # Check if we have a stable shell prompt
+            if stable_reads >= stable_count:
+                # Look for shell prompt at end of last line
+                for pattern in SHELL_PROMPT_PATTERNS:
+                    if last_line.endswith(pattern.rstrip()):
+                        return True
+                # Also check if line ends with common prompt chars
+                if last_line and last_line[-1] in '$%>#':
+                    return True
+
+        except Exception:
+            # Screen read failed, retry
+            pass
+
+        await asyncio.sleep(poll_interval)
+
+    return False
+
+
+# =============================================================================
 # Claude Session Control
 # =============================================================================
 
@@ -202,25 +279,33 @@ async def start_claude_in_session(
     wait_seconds: float = 3.0,
     dangerously_skip_permissions: bool = False,
     env: Optional[dict[str, str]] = None,
+    shell_ready_timeout: float = 10.0,
 ) -> None:
     """
     Start Claude Code in an existing iTerm2 session.
 
-    Changes to the project directory and launches Claude Code.
+    Changes to the project directory and launches Claude Code. Waits for shell
+    readiness before sending commands to prevent garbled input.
 
     Args:
         session: iTerm2 session to use
         project_path: Directory to run Claude in
         resume_session: Optional session ID to resume
-        wait_seconds: Time to wait for Claude to initialize
+        wait_seconds: Time to wait for Claude to initialize after starting
         dangerously_skip_permissions: If True, start with --dangerously-skip-permissions
         env: Optional dict of environment variables to set before running claude
+        shell_ready_timeout: Max seconds to wait for shell prompt before each command
     """
     import asyncio
 
+    # Wait for shell to be ready before sending cd command
+    await wait_for_shell_ready(session, timeout_seconds=shell_ready_timeout)
+
     # Change to project directory
     await send_prompt(session, f"cd {project_path}")
-    await asyncio.sleep(0.3)
+
+    # Wait for shell to be ready after cd before sending claude command
+    await wait_for_shell_ready(session, timeout_seconds=shell_ready_timeout)
 
     # Build and run claude command
     cmd = "claude"
