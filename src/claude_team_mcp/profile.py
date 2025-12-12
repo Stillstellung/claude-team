@@ -108,6 +108,71 @@ COLORS_DARK = {
 
 
 # =============================================================================
+# Screen Dimension Calculation
+# =============================================================================
+
+
+def calculate_screen_dimensions() -> tuple[int, int]:
+    """
+    Calculate terminal columns/rows to fill the screen.
+
+    Uses system_profiler to get screen resolution and calculates appropriate
+    terminal dimensions based on Menlo 12pt font cell size.
+
+    Returns:
+        Tuple of (columns, rows) for a screen-filling terminal window
+    """
+    import subprocess
+    import re
+
+    try:
+        result = subprocess.run(
+            ["system_profiler", "SPDisplaysDataType"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+
+        # Parse resolution from output like "Resolution: 3024 x 1964"
+        match = re.search(r"Resolution: (\d+) x (\d+)", result.stdout)
+        if not match:
+            logger.warning("Could not parse screen resolution, using defaults")
+            return (200, 60)
+
+        screen_w, screen_h = int(match.group(1)), int(match.group(2))
+
+        # Detect Retina display (2x scale factor)
+        scale = 2 if "Retina" in result.stdout else 1
+        logical_w = screen_w // scale
+        logical_h = screen_h // scale
+
+        # Subtract margins for window chrome:
+        # - ~20px for window borders
+        # - ~100px for menu bar + dock + title bar
+        usable_w = logical_w - 20
+        usable_h = logical_h - 100
+
+        # Menlo 12pt cell size (approximately)
+        cell_w, cell_h = 7.2, 14.0
+
+        cols = int(usable_w / cell_w)
+        rows = int(usable_h / cell_h)
+
+        logger.debug(
+            f"Screen {screen_w}x{screen_h} (scale {scale}) -> "
+            f"terminal {cols}x{rows}"
+        )
+        return (cols, rows)
+
+    except subprocess.TimeoutExpired:
+        logger.warning("system_profiler timed out, using default dimensions")
+        return (200, 60)
+    except Exception as e:
+        logger.warning(f"Failed to calculate screen dimensions: {e}")
+        return (200, 60)
+
+
+# =============================================================================
 # Dynamic Profile Creation
 # =============================================================================
 
@@ -167,7 +232,7 @@ def _build_dynamic_profile_dict() -> dict:
     Creates a profile configuration with:
     - Name: claude-team
     - Font: Source Code Pro 12pt (fallback to Menlo if unavailable)
-    - Window style: Maximized
+    - Window style: Normal with calculated screen-filling dimensions
     - Dark mode colors (default)
 
     Returns:
@@ -184,6 +249,9 @@ def _build_dynamic_profile_dict() -> dict:
     # Use dark mode colors as default (most common for terminal use)
     colors = COLORS_DARK
 
+    # Calculate screen-filling dimensions
+    cols, rows = calculate_screen_dimensions()
+
     # Build the profile configuration.
     # iTerm2 dynamic profiles use specific key names - see:
     # https://iterm2.com/documentation-dynamic-profiles.html
@@ -192,8 +260,12 @@ def _build_dynamic_profile_dict() -> dict:
         "Guid": f"{PROFILE_NAME}-guid",
         # Font: format is "FontName Size" for Normal Font
         "Normal Font": f"{font_name} {FONT_SIZE}",
-        # Window style: 3 = Maximized (0=normal, 1=fullscreen, 2=maximized high, 3=maximized)
-        "Initial Window Type": 3,
+        # Window style: 0 = Normal (avoids creating new macOS Space like Maximized does)
+        # We use calculated Columns/Rows to fill the screen instead
+        "Initial Window Type": 0,
+        # Screen-filling dimensions calculated from display resolution
+        "Columns": cols,
+        "Rows": rows,
         # Tab color enabled
         "Use Tab Color": True,
         # Smart cursor color

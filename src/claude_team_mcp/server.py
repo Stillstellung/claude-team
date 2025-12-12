@@ -364,6 +364,15 @@ async def spawn_session(
         badge_text = format_badge_text(issue_id, task_description)
         if badge_text:
             profile_customizations.set_badge_text(badge_text)
+            # Configure badge appearance (smaller, subtle)
+            profile_customizations.set_badge_font("Menlo 12")
+            profile_customizations.set_badge_max_width(0.3)
+            profile_customizations.set_badge_max_height(0.2)
+            profile_customizations.set_badge_right_margin(10)
+            profile_customizations.set_badge_top_margin(10)
+            # Light gray, semi-transparent so it doesn't obscure terminal
+            badge_color = iterm2.Color(128, 128, 128, 50)
+            profile_customizations.set_badge_color(badge_color)
 
         # Create iTerm2 session based on layout
         layout_info = {"layout_used": layout}  # Default, may be updated below
