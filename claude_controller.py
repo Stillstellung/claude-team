@@ -87,8 +87,16 @@ class ClaudeSession:
             prompt: The text to send
             submit: If True, send carriage return to submit the prompt
         """
+        import asyncio
+
         await self.iterm_session.async_send_text(prompt)
         if submit:
+            # Add a small delay before sending Enter to ensure the text paste
+            # is fully processed by iTerm2. This is critical in async contexts
+            # where the event loop may schedule Enter before the paste completes.
+            # Multi-line text needs more time due to bracketed paste mode.
+            delay = 0.1 if "\n" in prompt else 0.05
+            await asyncio.sleep(delay)
             # Use Ctrl+M (carriage return \x0d) instead of \n
             # iTerm2 interprets \x0d as the actual Enter key
             await self.iterm_session.async_send_text("\x0d")

@@ -319,10 +319,12 @@ async def send_prompt(session: "iterm2.Session", text: str, submit: bool = True)
     require_iterm2()
     await session.async_send_text(text)
     if submit:
-        # Multi-line text triggers bracketed paste mode in iTerm2. The terminal
-        # buffers pasted content and needs time to process before Enter works.
-        if "\n" in text:
-            await asyncio.sleep(0.1)
+        # Always add a small delay before sending Enter to ensure the text paste
+        # is fully processed by iTerm2. This is critical in async contexts (like
+        # MCP servers) where the event loop may schedule Enter before the paste
+        # completes. Multi-line text needs more time due to bracketed paste mode.
+        delay = 0.1 if "\n" in text else 0.05
+        await asyncio.sleep(delay)
         await session.async_send_text(KEYS['enter'])
 
 
