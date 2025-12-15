@@ -5,8 +5,13 @@ Low-level primitives for iTerm2 terminal control, extracted and adapted
 from the original primitives.py for use in the MCP server.
 """
 
+import logging
+import re
+import subprocess
 from typing import Optional, Callable
 from pathlib import Path
+
+logger = logging.getLogger("claude-team-mcp.iterm_utils")
 
 
 # =============================================================================
@@ -144,13 +149,70 @@ async def read_screen_text(session: "iterm2.Session") -> str:
 # Window Management
 # =============================================================================
 
+
+def _calculate_screen_frame() -> tuple[float, float, float, float]:
+    """
+    Calculate a screen-filling window frame that avoids macOS fullscreen.
+
+    Returns dimensions slightly smaller than full screen to ensure the window
+    stays in the current Space rather than entering macOS fullscreen mode.
+
+    Returns:
+        Tuple of (x, y, width, height) in points for the window frame.
+    """
+    try:
+        result = subprocess.run(
+            ["system_profiler", "SPDisplaysDataType"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+
+        # Parse resolution from output like "Resolution: 3840 x 2160"
+        match = re.search(r"Resolution: (\d+) x (\d+)", result.stdout)
+        if not match:
+            logger.warning("Could not parse screen resolution, using defaults")
+            return (0.0, 25.0, 1400.0, 900.0)
+
+        screen_w, screen_h = int(match.group(1)), int(match.group(2))
+
+        # Detect Retina display (2x scale factor)
+        scale = 2 if "Retina" in result.stdout else 1
+        logical_w = screen_w // scale
+        logical_h = screen_h // scale
+
+        # Leave space for menu bar (25px) and dock (~70px), plus small margins
+        # to ensure we don't trigger fullscreen mode
+        x = 0.0
+        y = 25.0  # Below menu bar
+        width = float(logical_w) - 10  # Small margin on right
+        height = float(logical_h) - 100  # Space for menu bar and dock
+
+        logger.debug(
+            f"Screen {screen_w}x{screen_h} (scale {scale}) -> "
+            f"window frame ({x}, {y}, {width}, {height})"
+        )
+        return (x, y, width, height)
+
+    except subprocess.TimeoutExpired:
+        logger.warning("system_profiler timed out, using default frame")
+        return (0.0, 25.0, 1400.0, 900.0)
+    except Exception as e:
+        logger.warning(f"Failed to calculate screen frame: {e}")
+        return (0.0, 25.0, 1400.0, 900.0)
+
+
 async def create_window(
     connection: "iterm2.Connection",
     profile: Optional[str] = None,
     profile_customizations: Optional["iterm2.LocalWriteOnlyProfile"] = None,
 ) -> "iterm2.Window":
     """
-    Create a new iTerm2 window.
+    Create a new iTerm2 window with screen-filling dimensions.
+
+    Creates the window, exits fullscreen if needed, and sets its frame to
+    fill the screen without entering macOS fullscreen mode (staying in the
+    current Space).
 
     Args:
         connection: iTerm2 connection object
@@ -162,11 +224,33 @@ async def create_window(
         New window object
     """
     import iterm2
-    return await iterm2.Window.async_create(
+
+    # Create the window
+    window = await iterm2.Window.async_create(
         connection,
         profile=profile,
         profile_customizations=profile_customizations,
     )
+
+    # Exit fullscreen mode if the window opened in fullscreen
+    # (can happen if user's default profile or iTerm2 settings use fullscreen)
+    is_fullscreen = await window.async_get_fullscreen()
+    if is_fullscreen:
+        logger.info("Window opened in fullscreen, exiting fullscreen mode")
+        await window.async_set_fullscreen(False)
+        # Give macOS time to animate out of fullscreen
+        import asyncio
+        await asyncio.sleep(0.5)
+
+    # Set window frame to fill screen without triggering fullscreen mode
+    x, y, width, height = _calculate_screen_frame()
+    frame = iterm2.Frame(
+        origin=iterm2.Point(x, y),
+        size=iterm2.Size(width, height),
+    )
+    await window.async_set_frame(frame)
+
+    return window
 
 
 async def create_tab(window: "iterm2.Window") -> "iterm2.Tab":
@@ -622,21 +706,41 @@ def count_panes_in_window(window: "iterm2.Window") -> int:
 async def find_available_window(
     app: "iterm2.App",
     max_panes: int = MAX_PANES_PER_TAB,
+    managed_session_ids: Optional[set[str]] = None,
 ) -> Optional[tuple["iterm2.Window", "iterm2.Tab", "iterm2.Session"]]:
     """
     Find a window with an available tab that has room for more panes.
 
-    Searches all terminal windows for a tab with fewer than max_panes sessions.
-    Returns the window, tab, and a session in that tab that can be split.
+    Searches terminal windows for a tab with fewer than max_panes sessions.
+    If managed_session_ids is provided, only considers windows that contain
+    at least one managed session (to avoid splitting into user's unrelated windows).
 
     Args:
         app: iTerm2 app object
         max_panes: Maximum panes before considering a tab full (default 4)
+        managed_session_ids: Optional set of iTerm2 session IDs that are managed
+            by claude-team. If provided, only windows containing at least one
+            of these sessions will be considered.
 
     Returns:
         Tuple of (window, tab, session) if found, None if all tabs are full
     """
     for window in app.terminal_windows:
+        # If we have managed session IDs, check if this window contains any
+        if managed_session_ids is not None:
+            window_has_managed_session = False
+            for tab in window.tabs:
+                for session in tab.sessions:
+                    if session.session_id in managed_session_ids:
+                        window_has_managed_session = True
+                        break
+                if window_has_managed_session:
+                    break
+            if not window_has_managed_session:
+                # Skip this window - it doesn't contain any managed sessions
+                continue
+
+        # Check if any tab has room for more panes
         for tab in window.tabs:
             pane_count = count_panes_in_tab(tab)
             if pane_count < max_panes:

@@ -356,6 +356,7 @@ async def spawn_session(
     project_path: str,
     session_name: str | None = None,
     layout: str = "new_window",
+    auto_layout: bool = False,
     skip_permissions: bool = False,
     split_from_session: str | None = None,
     issue_id: str | None = None,
@@ -373,8 +374,11 @@ async def spawn_session(
         project_path: Directory where Claude Code should run
         session_name: Optional friendly name for the session
         layout: How to create the session - "new_window", "split_vertical", "split_horizontal",
-            or "auto" (default "new_window"). When "auto" or auto_layout=True, intelligently
-            reuses existing windows with available pane slots.
+            or "auto" (default "new_window"). When "auto", intelligently reuses existing
+            windows with available pane slots (< 4 panes).
+        auto_layout: When True, overrides layout to use smart window selection. Finds
+            windows managed by claude-team with < 4 panes and splits there. Falls back
+            to creating a new window if no room is available.
         skip_permissions: If True, start Claude with --dangerously-skip-permissions flag
         split_from_session: For split layouts, ID of existing managed session to split from.
             If not provided, splits the currently active iTerm window.
@@ -384,7 +388,8 @@ async def spawn_session(
             a color is automatically generated based on session count.
 
     Returns:
-        Dict with session_id, status, and project_path
+        Dict with session_id, status, project_path, and layout_info describing
+        what layout strategy was used (including auto_layout details).
     """
     import iterm2
 
@@ -431,10 +436,91 @@ async def spawn_session(
         badge_text = format_badge_text(issue_id, task_description)
         if badge_text:
             profile_customizations.set_badge_text(badge_text)
+            # Configure badge appearance (smaller, subtle)
+            profile_customizations.set_badge_font("Menlo 12")
+            profile_customizations.set_badge_max_width(0.3)
+            profile_customizations.set_badge_max_height(0.2)
+            profile_customizations.set_badge_right_margin(10)
+            profile_customizations.set_badge_top_margin(10)
+            # Light gray, semi-transparent so it doesn't obscure terminal
+            badge_color = iterm2.Color(128, 128, 128, 50)
+            profile_customizations.set_badge_color(badge_color)
 
         # Create iTerm2 session based on layout
-        layout_info = {"layout_used": layout}  # Default, may be updated below
-        if layout == "new_window":
+        # Handle auto_layout parameter - it overrides the layout setting
+        effective_layout = layout
+        if auto_layout or layout == "auto":
+            effective_layout = "auto"
+
+        layout_info = {"layout_used": effective_layout}  # Default, may be updated below
+
+        if effective_layout == "auto":
+            # Smart layout: find an existing window with available pane slots
+            # Only consider windows that contain sessions managed by claude-team
+            managed_session_ids = {
+                s.iterm_session.session_id for s in registry.list_all()
+            }
+            available = await find_available_window(
+                app,
+                max_panes=MAX_PANES_PER_TAB,
+                managed_session_ids=managed_session_ids if managed_session_ids else None,
+            )
+
+            if available:
+                # Found a window with room - split an existing pane there
+                window, tab, source_session = available
+                pane_count = count_panes_in_tab(tab)
+
+                # Use vertical split for 2nd pane, horizontal for 3rd/4th to create quad-like layout
+                vertical = pane_count < 2
+
+                # Choose the correct split source for proper 2x2 quad layout:
+                # - pane_count=1: split any session vertically → left | right
+                # - pane_count=2: split sessions[0] (left) horizontally → TL, BL | right
+                # - pane_count=3: split the right pane horizontally → 2x2 quad
+                #
+                # After vertical split: sessions = [left, right]
+                # After horizontal split of left: sessions = [top-left, bottom-left, right]
+                # So for 3→4, we need sessions[-1] (the last one, which is right)
+                if pane_count == 2:
+                    # Split the first session (left pane) to create top-left and bottom-left
+                    split_source = tab.sessions[0]
+                elif pane_count == 3:
+                    # Split the last session (right pane) to complete the 2x2 quad
+                    # After the 2→3 split, right pane ends up as the last session
+                    split_source = tab.sessions[-1]
+                else:
+                    # For first split (1→2), use whatever session we have
+                    split_source = source_session
+
+                iterm_session = await split_pane(
+                    split_source,
+                    vertical=vertical,
+                    profile=PROFILE_NAME,
+                    profile_customizations=profile_customizations,
+                )
+                layout_info = {
+                    "layout_used": "auto",
+                    "auto_layout_result": "reused_window",
+                    "split_direction": "vertical" if vertical else "horizontal",
+                    "panes_in_tab_before": pane_count,
+                    "panes_in_tab_after": pane_count + 1,
+                }
+            else:
+                # No available window - create a new one
+                window = await create_window(
+                    connection,
+                    profile=PROFILE_NAME,
+                    profile_customizations=profile_customizations,
+                )
+                iterm_session = window.current_tab.current_session
+                layout_info = {
+                    "layout_used": "auto",
+                    "auto_layout_result": "new_window",
+                    "reason": "no_available_window_with_room",
+                }
+
+        elif effective_layout == "new_window":
             # Create a new window with profile customizations
             window = await create_window(
                 connection,
@@ -442,8 +528,9 @@ async def spawn_session(
                 profile_customizations=profile_customizations,
             )
             iterm_session = window.current_tab.current_session
-        elif layout in ("split_vertical", "split_horizontal"):
-            vertical = layout == "split_vertical"
+
+        elif effective_layout in ("split_vertical", "split_horizontal"):
+            vertical = effective_layout == "split_vertical"
 
             # Determine which session to split from
             if split_from_session:
@@ -482,8 +569,8 @@ async def spawn_session(
                     )
         else:
             return error_response(
-                f"Invalid layout: {layout}",
-                hint="Valid layouts are: new_window, split_vertical, split_horizontal",
+                f"Invalid layout: {effective_layout}",
+                hint="Valid layouts are: new_window, split_vertical, split_horizontal, auto",
             )
 
         # Register the session before starting Claude (so we track it even if startup fails)
@@ -543,7 +630,7 @@ async def spawn_session(
 @mcp.tool()
 async def spawn_team(
     ctx: Context[ServerSession, AppContext],
-    projects: dict[str, str],
+    projects: dict[str, str | dict],
     layout: str = "quad",
     skip_permissions: bool = False,
 ) -> dict:
@@ -553,15 +640,22 @@ async def spawn_team(
     Creates a new iTerm2 window with the specified pane layout and starts
     Claude Code in each pane. All sessions are registered for management.
     Each pane receives a unique tab color from a visually distinct sequence,
-    and badges display the pane position.
+    and badges display issue/task information.
 
     Args:
-        projects: Dict mapping pane names to project paths. Keys must match
+        projects: Dict mapping pane names to project config. Keys must match
             the layout's pane names:
             - "vertical": ["left", "right"]
             - "horizontal": ["top", "bottom"]
             - "quad": ["top_left", "top_right", "bottom_left", "bottom_right"]
             - "triple_vertical": ["left", "middle", "right"]
+
+            Values can be either:
+            - A string (project path) for simple usage
+            - A dict with keys:
+                - "path" (required): Project directory path
+                - "issue_id" (optional): Beads issue ID for badge (e.g., "cic-123")
+                - "task_description" (optional): Task description for badge
         layout: Layout type - "vertical", "horizontal", "quad", or "triple_vertical"
         skip_permissions: If True, start Claude with --dangerously-skip-permissions
 
@@ -574,9 +668,9 @@ async def spawn_team(
     Example:
         spawn_team(
             projects={
-                "top_left": "/path/to/frontend",
-                "top_right": "/path/to/backend",
-                "bottom_left": "/path/to/api",
+                "top_left": {"path": "/path/to/frontend", "issue_id": "cic-123", "task_description": "Fix auth"},
+                "top_right": "/path/to/backend",  # simple string still works
+                "bottom_left": {"path": "/path/to/api", "task_description": "Add endpoint"},
                 "bottom_right": "/path/to/tests"
             },
             layout="quad"
@@ -607,11 +701,40 @@ async def spawn_team(
             hint=f"Valid pane names for '{layout}' are: {', '.join(expected_panes)}",
         )
 
+    # Parse projects dict - each value can be a string (path) or dict with path/metadata
+    # Store parsed data: pane_name -> {path, issue_id, task_description}
+    parsed_projects: dict[str, dict] = {}
+    for pane_name, project_config in projects.items():
+        if isinstance(project_config, str):
+            # Simple string path
+            parsed_projects[pane_name] = {
+                "path": project_config,
+                "issue_id": None,
+                "task_description": None,
+            }
+        elif isinstance(project_config, dict):
+            # Dict with path and optional metadata
+            if "path" not in project_config:
+                return error_response(
+                    f"Missing 'path' key in project config for '{pane_name}'",
+                    hint="When using dict format, 'path' is required. Example: {'path': '/some/dir', 'issue_id': 'cic-123'}",
+                )
+            parsed_projects[pane_name] = {
+                "path": project_config["path"],
+                "issue_id": project_config.get("issue_id"),
+                "task_description": project_config.get("task_description"),
+            }
+        else:
+            return error_response(
+                f"Invalid project config type for '{pane_name}': {type(project_config).__name__}",
+                hint="Project config must be a string (path) or dict with 'path' key",
+            )
+
     # Validate all project paths exist and detect worktrees
     resolved_projects = {}
     project_envs: dict[str, dict[str, str]] = {}
-    for pane_name, project_path in projects.items():
-        resolved = os.path.abspath(os.path.expanduser(project_path))
+    for pane_name, pdata in parsed_projects.items():
+        resolved = os.path.abspath(os.path.expanduser(pdata["path"]))
         if not os.path.isdir(resolved):
             return error_response(
                 f"Project path does not exist for '{pane_name}': {resolved}",
@@ -642,11 +765,19 @@ async def spawn_team(
 
             customization = iterm2.LocalWriteOnlyProfile()
 
-            # Generate session name for this pane
-            session_name = f"{layout}_{pane_name}"
+            # Get parsed metadata for this pane
+            pdata = parsed_projects[pane_name]
+            issue_id = pdata.get("issue_id")
+            task_description = pdata.get("task_description")
 
-            # Set tab title with pane position
-            tab_title = format_session_title(session_name)
+            # Generate session name - prefer issue_id if available
+            if issue_id:
+                session_name = issue_id
+            else:
+                session_name = f"{layout}_{pane_name}"
+
+            # Set tab title
+            tab_title = format_session_title(session_name, task_description)
             customization.set_name(tab_title)
 
             # Set unique tab color for this pane
@@ -654,8 +785,10 @@ async def spawn_team(
             customization.set_tab_color(color)
             customization.set_use_tab_color(True)
 
-            # Set badge text to show pane position (e.g., "top_left" -> "top-left")
-            badge_text = pane_name.replace("_", "-")
+            # Set badge text using issue/task info if available, else pane position
+            badge_text = format_badge_text(issue_id, task_description)
+            if not badge_text:
+                badge_text = pane_name.replace("_", "-")
             customization.set_badge_text(badge_text)
 
             pane_customizations[pane_name] = customization
@@ -674,10 +807,17 @@ async def spawn_team(
         # Register all sessions (this is quick, no I/O)
         managed_sessions = {}
         for pane_name, iterm_session in pane_sessions.items():
+            # Use issue_id as session name if available, else layout_pane format
+            pdata = parsed_projects[pane_name]
+            if pdata.get("issue_id"):
+                session_name = pdata["issue_id"]
+            else:
+                session_name = f"{layout}_{pane_name}"
+
             managed = registry.add(
                 iterm_session=iterm_session,
                 project_path=resolved_projects[pane_name],
-                name=f"{layout}_{pane_name}",  # e.g., "quad_top_left"
+                name=session_name,
             )
             managed_sessions[pane_name] = managed
 
