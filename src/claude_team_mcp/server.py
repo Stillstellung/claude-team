@@ -355,8 +355,7 @@ async def spawn_session(
     ctx: Context[ServerSession, AppContext],
     project_path: str,
     session_name: str | None = None,
-    layout: str = "new_window",
-    auto_layout: bool = False,
+    layout: str = "auto",
     skip_permissions: bool = False,
     split_from_session: str | None = None,
     issue_id: str | None = None,
@@ -373,11 +372,9 @@ async def spawn_session(
     Args:
         project_path: Directory where Claude Code should run
         session_name: Optional friendly name for the session
-        layout: How to create the session - "new_window", "split_vertical", "split_horizontal",
-            or "auto" (default "new_window"). When "auto", intelligently reuses existing
-            windows with available pane slots (< 4 panes).
-        auto_layout: When True, overrides layout to use smart window selection. Finds
-            windows managed by claude-team with < 4 panes and splits there. Falls back
+        layout: How to create the session - "auto" (default), "new_window", "split_vertical",
+            or "split_horizontal". When "auto", intelligently reuses existing windows
+            managed by claude-team with available pane slots (< 4 panes), falling back
             to creating a new window if no room is available.
         skip_permissions: If True, start Claude with --dangerously-skip-permissions flag
         split_from_session: For split layouts, ID of existing managed session to split from.
@@ -447,24 +444,23 @@ async def spawn_session(
             profile_customizations.set_badge_color(badge_color)
 
         # Create iTerm2 session based on layout
-        # Handle auto_layout parameter - it overrides the layout setting
-        effective_layout = layout
-        if auto_layout or layout == "auto":
-            effective_layout = "auto"
+        layout_info = {"layout_used": layout}  # Default, may be updated below
 
-        layout_info = {"layout_used": effective_layout}  # Default, may be updated below
-
-        if effective_layout == "auto":
+        if layout == "auto":
             # Smart layout: find an existing window with available pane slots
             # Only consider windows that contain sessions managed by claude-team
             managed_session_ids = {
                 s.iterm_session.session_id for s in registry.list_all()
             }
-            available = await find_available_window(
-                app,
-                max_panes=MAX_PANES_PER_TAB,
-                managed_session_ids=managed_session_ids if managed_session_ids else None,
-            )
+            # If no managed sessions yet, skip search - will create new window
+            if not managed_session_ids:
+                available = None
+            else:
+                available = await find_available_window(
+                    app,
+                    max_panes=MAX_PANES_PER_TAB,
+                    managed_session_ids=managed_session_ids,
+                )
 
             if available:
                 # Found a window with room - split an existing pane there
@@ -520,7 +516,7 @@ async def spawn_session(
                     "reason": "no_available_window_with_room",
                 }
 
-        elif effective_layout == "new_window":
+        elif layout == "new_window":
             # Create a new window with profile customizations
             window = await create_window(
                 connection,
@@ -529,8 +525,8 @@ async def spawn_session(
             )
             iterm_session = window.current_tab.current_session
 
-        elif effective_layout in ("split_vertical", "split_horizontal"):
-            vertical = effective_layout == "split_vertical"
+        elif layout in ("split_vertical", "split_horizontal"):
+            vertical = layout == "split_vertical"
 
             # Determine which session to split from
             if split_from_session:
@@ -569,7 +565,7 @@ async def spawn_session(
                     )
         else:
             return error_response(
-                f"Invalid layout: {effective_layout}",
+                f"Invalid layout: {layout}",
                 hint="Valid layouts are: new_window, split_vertical, split_horizontal, auto",
             )
 

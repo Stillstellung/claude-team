@@ -64,7 +64,7 @@ After adding the configuration, restart Claude Code for it to take effect.
 Arguments:
   project_path: str      - Directory where Claude Code should run
   session_name: str      - Optional friendly name for the session
-  layout: str            - "new_window", "split_vertical", or "split_horizontal"
+  layout: str            - "auto" (default), "new_window", "split_vertical", or "split_horizontal"
 
 Returns:
   session_id, name, project_path, status, claude_session_id
