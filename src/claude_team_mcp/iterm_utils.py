@@ -235,9 +235,9 @@ async def create_window(
     if is_fullscreen:
         logger.info("Window opened in fullscreen, exiting fullscreen mode")
         await window.async_set_fullscreen(False)
-        # Give macOS time to animate out of fullscreen
+        # Give macOS time to animate out of fullscreen (animation is ~0.2s)
         import asyncio
-        await asyncio.sleep(0.5)
+        await asyncio.sleep(0.2)
 
     # Set window frame to fill screen without triggering fullscreen mode
     x, y, width, height = _calculate_screen_frame()
