@@ -591,14 +591,18 @@ async def spawn_session(
         )
 
         # Send marker message for JSONL correlation
-        from .session_state import generate_marker_message
+        from .session_state import generate_marker_message, wait_for_marker_in_jsonl
 
         marker_message = generate_marker_message(managed.session_id)
         await send_prompt(iterm_session, marker_message, submit=True)
 
-        # Wait for marker to be logged, then discover by marker
-        await asyncio.sleep(2)  # Give Claude time to process and log the marker
-        if not managed.discover_claude_session_by_marker():
+        # Wait for marker to appear in JSONL (polls every 100ms, 5s timeout)
+        claude_session_id = await wait_for_marker_in_jsonl(
+            resolved_path, managed.session_id, timeout=5.0, poll_interval=0.1
+        )
+        if claude_session_id:
+            managed.claude_session_id = claude_session_id
+        elif not managed.discover_claude_session_by_marker():
             # Fallback to old discovery if marker not found
             logger.warning(
                 f"Marker-based discovery failed for {managed.session_id}, "

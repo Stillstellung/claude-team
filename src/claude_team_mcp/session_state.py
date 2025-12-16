@@ -235,6 +235,39 @@ def extract_marker_session_id(text: str) -> Optional[str]:
     return text[start:end]
 
 
+async def wait_for_marker_in_jsonl(
+    project_path: str,
+    session_id: str,
+    timeout: float = 5.0,
+    poll_interval: float = 0.1,
+    max_age_seconds: int = 120,
+) -> Optional[str]:
+    """
+    Wait for a session marker to appear in a JSONL file.
+
+    Polls the project's JSONL files until the marker is found or timeout.
+
+    Args:
+        project_path: Absolute path to the project
+        session_id: The session ID to search for in markers
+        timeout: Maximum seconds to wait (default 5.0)
+        poll_interval: Seconds between checks (default 0.1 = 100ms)
+        max_age_seconds: Only check files modified within this many seconds
+
+    Returns:
+        The Claude session ID (JSONL filename stem) if found, None on timeout
+    """
+    import asyncio
+
+    start = time.time()
+    while time.time() - start < timeout:
+        result = find_jsonl_by_marker(project_path, session_id, max_age_seconds)
+        if result:
+            return result
+        await asyncio.sleep(poll_interval)
+    return None
+
+
 def find_jsonl_by_marker(
     project_path: str,
     session_id: str,
