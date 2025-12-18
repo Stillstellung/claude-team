@@ -19,10 +19,7 @@ An MCP server that allows one Claude Code session to spawn and manage a team of 
 
 ## Installation
 
-### From PyPI (recommended)
-
 ```bash
-# Install via uvx (no clone needed)
 uvx --from claude-team-mcp claude-team
 ```
 

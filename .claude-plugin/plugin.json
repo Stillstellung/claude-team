@@ -11,5 +11,6 @@
   "repository": "https://github.com/Martian-Engineering/claude-team",
   "license": "MIT",
   "keywords": ["mcp", "iterm2", "orchestration", "multi-agent"],
+  "commands": "./commands/",
   "mcpServers": "./.mcp.json"
 }
