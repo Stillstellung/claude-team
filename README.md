@@ -19,9 +19,19 @@ An MCP server that allows one Claude Code session to spawn and manage a team of 
 
 ## Installation
 
+### From PyPI (recommended)
+
+```bash
+# Install via uvx (no clone needed)
+uvx --from claude-team-mcp claude-team
+```
+
+### From Source
+
 ```bash
 # Clone the repository
-cd /path/to/claude-team
+git clone https://github.com/Martian-Engineering/claude-team.git
+cd claude-team
 
 # Install with uv
 uv sync
@@ -32,6 +42,21 @@ uv sync
 Add to your Claude Code MCP settings. You can configure this at:
 - **Global**: `~/.claude/settings.json`
 - **Project**: `.claude/settings.json` in your project directory
+
+### Using PyPI package (recommended)
+
+```json
+{
+  "mcpServers": {
+    "claude-team": {
+      "command": "uvx",
+      "args": ["--from", "claude-team-mcp", "claude-team"]
+    }
+  }
+}
+```
+
+### Using local clone
 
 ```json
 {
