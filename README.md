@@ -84,14 +84,40 @@ After adding the configuration, restart Claude Code for it to take effect.
 
 ## MCP Tools
 
+### Session Management
+
 | Tool | Description |
 |------|-------------|
 | `spawn_session` | Create a new Claude Code session in a new window or split pane |
+| `spawn_team` | Spawn multiple sessions in a multi-pane layout (vertical, horizontal, quad) |
 | `list_sessions` | List all managed sessions with status |
-| `send_message` | Send a prompt to a session, optionally wait for response |
-| `get_response` | Get the latest response from a session |
 | `get_session_status` | Get detailed status including screen preview |
 | `close_session` | Gracefully terminate a session |
+| `discover_sessions` | Find existing Claude Code sessions running in iTerm2 |
+| `import_session` | Import an unmanaged iTerm2 session into the registry |
+
+### Messaging
+
+| Tool | Description |
+|------|-------------|
+| `send_message` | Send a prompt to a session, optionally wait for response |
+| `broadcast_message` | Send the same message to multiple sessions in parallel |
+| `get_response` | Get the latest response from a session |
+| `get_conversation_history` | Get paginated conversation history from a session |
+
+### Task Completion
+
+| Tool | Description |
+|------|-------------|
+| `get_task_status` | Check if a delegated task is complete (via markers, git, beads, idle) |
+| `wait_for_completion` | Block until a task completes or times out |
+| `cancel_task` | Cancel tracking of a task without stopping the session |
+
+### Utilities
+
+| Tool | Description |
+|------|-------------|
+| `bd_help` | Get a quick reference guide for using Beads issue tracking |
 
 ### Tool Details
 
