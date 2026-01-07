@@ -545,9 +545,18 @@ async def start_claude_in_session(
     # Build claude command with flags
     # Allow overriding the claude command via environment variable (e.g., "happy")
     claude_cmd = os.environ.get("CLAUDE_TEAM_COMMAND", "claude")
+    is_default_claude_command = claude_cmd == "claude"
+
     if dangerously_skip_permissions:
         claude_cmd += " --dangerously-skip-permissions"
-    if stop_hook_marker_id:
+
+    # Only add --settings for the default 'claude' command.
+    # Custom commands like 'happy' have their own session tracking mechanisms
+    # (e.g., Happy uses a SessionStart hook for mobile app integration).
+    # Adding our --settings flag conflicts with theirs because Claude only
+    # uses the first --settings file, breaking their session tracking.
+    # See HAPPY_INTEGRATION_RESEARCH.md for full analysis.
+    if stop_hook_marker_id and is_default_claude_command:
         settings_file = build_stop_hook_settings_file(stop_hook_marker_id)
         claude_cmd += f" --settings {settings_file}"
 
