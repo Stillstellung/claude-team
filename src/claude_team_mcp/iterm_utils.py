@@ -18,6 +18,8 @@ if TYPE_CHECKING:
     from iterm2.tab import Tab as ItermTab
     from iterm2.window import Window as ItermWindow
 
+    from .cli_backends import AgentCLI
+
 from .subprocess_cache import cached_system_profiler
 
 logger = logging.getLogger("claude-team-mcp.iterm_utils")
@@ -452,9 +454,76 @@ async def wait_for_claude_ready(
     return False
 
 
+async def wait_for_agent_ready(
+    session: "ItermSession",
+    cli: "AgentCLI",
+    timeout_seconds: float = 15.0,
+    poll_interval: float = 0.2,
+    stable_count: int = 2,
+) -> bool:
+    """
+    Wait for an agent CLI to be ready to accept input.
+
+    Generic version of wait_for_claude_ready() that uses the CLI's ready_patterns.
+    Polls the screen content and waits for any of the CLI's ready patterns to appear.
+
+    Args:
+        session: iTerm2 session to monitor
+        cli: The AgentCLI instance providing ready_patterns
+        timeout_seconds: Maximum time to wait for readiness
+        poll_interval: Time between screen content checks
+        stable_count: Number of consecutive stable reads before considering ready
+
+    Returns:
+        True if agent became ready, False if timeout was reached
+    """
+    import asyncio
+    import time
+
+    patterns = cli.ready_patterns()
+    start_time = time.monotonic()
+    last_content = None
+    stable_reads = 0
+
+    while (time.monotonic() - start_time) < timeout_seconds:
+        try:
+            content = await read_screen_text(session)
+            lines = content.split('\n')
+
+            # Check if content is stable (same as last read)
+            if content == last_content:
+                stable_reads += 1
+            else:
+                stable_reads = 0
+                last_content = content
+
+            # Only check for readiness after content has stabilized
+            if stable_reads >= stable_count:
+                for line in lines:
+                    stripped = line.strip()
+                    for pattern in patterns:
+                        if pattern in stripped:
+                            logger.debug(
+                                f"Agent ready: found pattern '{pattern}' in line"
+                            )
+                            return True
+
+        except Exception as e:
+            # Screen read failed, retry
+            logger.debug(f"Screen read failed during agent ready check: {e}")
+
+        await asyncio.sleep(poll_interval)
+
+    logger.warning(
+        f"Timeout waiting for {cli.engine_id} readiness ({timeout_seconds}s)"
+    )
+    return False
+
+
 # =============================================================================
-# Claude Session Control
+# Agent Session Control
 # =============================================================================
+
 
 def build_stop_hook_settings_file(marker_id: str) -> str:
     """
@@ -500,6 +569,74 @@ def build_stop_hook_settings_file(marker_id: str) -> str:
     return str(settings_file)
 
 
+async def start_agent_in_session(
+    session: "ItermSession",
+    cli: "AgentCLI",
+    project_path: str,
+    dangerously_skip_permissions: bool = False,
+    env: Optional[dict[str, str]] = None,
+    shell_ready_timeout: float = 10.0,
+    agent_ready_timeout: float = 30.0,
+    stop_hook_marker_id: Optional[str] = None,
+) -> None:
+    """
+    Start an agent CLI in an existing iTerm2 session.
+
+    Changes to the project directory and launches the agent in a single
+    atomic command (cd && <agent>). Waits for shell readiness before sending
+    the command, then waits for the agent's ready patterns to appear.
+
+    Args:
+        session: iTerm2 session to use
+        cli: AgentCLI instance defining command and arguments
+        project_path: Directory to run the agent in
+        dangerously_skip_permissions: If True, add skip-permissions flag
+        env: Optional dict of environment variables to set before running agent
+        shell_ready_timeout: Max seconds to wait for shell prompt
+        agent_ready_timeout: Max seconds to wait for agent to start
+        stop_hook_marker_id: If provided, inject a Stop hook for completion detection
+            (only used if cli.supports_settings_file() returns True)
+
+    Raises:
+        RuntimeError: If shell not ready or agent fails to start within timeout
+    """
+    # Wait for shell to be ready
+    shell_ready = await wait_for_shell_ready(session, timeout_seconds=shell_ready_timeout)
+    if not shell_ready:
+        raise RuntimeError(
+            f"Shell not ready after {shell_ready_timeout}s in {project_path}. "
+            "Terminal may still be initializing."
+        )
+
+    # Build settings file for Stop hook injection if supported
+    settings_file = None
+    if stop_hook_marker_id and cli.supports_settings_file():
+        settings_file = build_stop_hook_settings_file(stop_hook_marker_id)
+
+    # Build the full command using the AgentCLI abstraction
+    agent_cmd = cli.build_full_command(
+        dangerously_skip_permissions=dangerously_skip_permissions,
+        settings_file=settings_file,
+        env_vars=env,
+    )
+
+    # Combine cd and agent into atomic command to avoid race condition.
+    # Shell executes "cd /path && agent" as a unit - if cd fails, agent won't run.
+    cmd = f"cd {project_path} && {agent_cmd}"
+
+    await send_prompt(session, cmd)
+
+    # Wait for agent to actually start (detect ready patterns, not blind sleep)
+    if not await wait_for_agent_ready(
+        session, cli, timeout_seconds=agent_ready_timeout
+    ):
+        raise RuntimeError(
+            f"{cli.engine_id} failed to start in {project_path} within "
+            f"{agent_ready_timeout}s. Check that '{cli.command()}' command is "
+            "available and authentication is configured."
+        )
+
+
 async def start_claude_in_session(
     session: "ItermSession",
     project_path: str,
@@ -512,6 +649,7 @@ async def start_claude_in_session(
     """
     Start Claude Code in an existing iTerm2 session.
 
+    Convenience wrapper around start_agent_in_session() for Claude.
     Changes to the project directory and launches Claude Code in a single
     atomic command (cd && claude). Waits for shell readiness before sending
     the command, then waits for Claude's startup banner to appear.
@@ -534,50 +672,38 @@ async def start_claude_in_session(
     Raises:
         RuntimeError: If shell not ready or Claude fails to start within timeout
     """
-    # Wait for shell to be ready
-    shell_ready = await wait_for_shell_ready(session, timeout_seconds=shell_ready_timeout)
-    if not shell_ready:
-        raise RuntimeError(
-            f"Shell not ready after {shell_ready_timeout}s in {project_path}. "
-            "Terminal may still be initializing."
-        )
+    from .cli_backends import claude_cli
 
-    # Build claude command with flags
-    # Allow overriding the claude command via environment variable (e.g., "happy")
-    claude_cmd = os.environ.get("CLAUDE_TEAM_COMMAND", "claude")
-    is_default_claude_command = claude_cmd == "claude"
+    await start_agent_in_session(
+        session=session,
+        cli=claude_cli,
+        project_path=project_path,
+        dangerously_skip_permissions=dangerously_skip_permissions,
+        env=env,
+        shell_ready_timeout=shell_ready_timeout,
+        agent_ready_timeout=claude_ready_timeout,
+        stop_hook_marker_id=stop_hook_marker_id,
+    )
 
-    if dangerously_skip_permissions:
-        claude_cmd += " --dangerously-skip-permissions"
 
-    # Only add --settings for the default 'claude' command.
-    # Custom commands like 'happy' have their own session tracking mechanisms
-    # (e.g., Happy uses a SessionStart hook for mobile app integration).
-    # Adding our --settings flag conflicts with theirs because Claude only
-    # uses the first --settings file, breaking their session tracking.
-    # See HAPPY_INTEGRATION_RESEARCH.md for full analysis.
-    if stop_hook_marker_id and is_default_claude_command:
-        settings_file = build_stop_hook_settings_file(stop_hook_marker_id)
-        claude_cmd += f" --settings {settings_file}"
+# Legacy alias for backward compatibility with Claude-specific code
+# that checks for banner patterns. Uses wait_for_agent_ready with claude_cli.
+async def _wait_for_claude_ready_via_agent(
+    session: "ItermSession",
+    timeout_seconds: float = 15.0,
+    poll_interval: float = 0.2,
+    stable_count: int = 2,
+) -> bool:
+    """Internal helper - uses wait_for_agent_ready with Claude CLI."""
+    from .cli_backends import claude_cli
 
-    # Prepend environment variables to claude (not cd)
-    if env:
-        env_exports = " ".join(f"{k}={v}" for k, v in env.items())
-        claude_cmd = f"{env_exports} {claude_cmd}"
-
-    # Combine cd and claude into atomic command to avoid race condition.
-    # Shell executes "cd /path && claude" as a unit - if cd fails, claude won't run.
-    # This eliminates the need for a second wait_for_shell_ready after cd.
-    cmd = f"cd {project_path} && {claude_cmd}"
-
-    await send_prompt(session, cmd)
-
-    # Wait for Claude to actually start (detect banner, not blind sleep)
-    if not await wait_for_claude_ready(session, timeout_seconds=claude_ready_timeout):
-        raise RuntimeError(
-            f"Claude failed to start in {project_path} within {claude_ready_timeout}s. "
-            "Check that 'claude' command is available and authentication is configured."
-        )
+    return await wait_for_agent_ready(
+        session=session,
+        cli=claude_cli,
+        timeout_seconds=timeout_seconds,
+        poll_interval=poll_interval,
+        stable_count=stable_count,
+    )
 
 
 # =============================================================================
