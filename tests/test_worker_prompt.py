@@ -3,6 +3,7 @@
 import pytest
 
 from claude_team_mcp.worker_prompt import (
+    AgentType,
     generate_worker_prompt,
     get_coordinator_guidance,
 )
@@ -183,3 +184,137 @@ class TestWorktreeMode:
         assert 'git commit -m "cic-123:' in prompt
         # Should NOT have separate "Commit when done" section
         assert "Commit when done" not in prompt
+
+
+class TestAgentTypeParameter:
+    """Tests for agent_type parameter in generate_worker_prompt."""
+
+    def test_default_agent_type_is_claude(self):
+        """Default agent_type should be claude."""
+        prompt = generate_worker_prompt("test", "Worker")
+        # Claude prompt has "claude-team" reference
+        assert "claude-team" in prompt
+
+    def test_explicit_claude_agent_type(self):
+        """Explicit claude agent_type should produce Claude prompt."""
+        prompt = generate_worker_prompt("test", "Worker", agent_type="claude")
+        assert "claude-team" in prompt
+        assert "automatically report" in prompt
+
+    def test_codex_agent_type_produces_different_prompt(self):
+        """Codex agent_type should produce Codex-specific prompt."""
+        prompt = generate_worker_prompt("test", "Worker", agent_type="codex")
+        # Codex prompt should NOT have claude-team specific references
+        assert "claude-team" not in prompt
+        # Codex prompt should have different completion detection instructions
+        assert "COMPLETED" in prompt or "BLOCKED" in prompt
+
+
+class TestCodexWorkerPrompt:
+    """Tests for Codex-specific worker prompt generation."""
+
+    def test_codex_includes_worker_name(self):
+        """Codex prompt should address the worker by name."""
+        prompt = generate_worker_prompt("test", "Zeppo", agent_type="codex")
+        assert "Zeppo" in prompt
+
+    def test_codex_has_no_mcp_markers(self):
+        """Codex prompt should not reference MCP markers."""
+        prompt = generate_worker_prompt("test", "Worker", agent_type="codex")
+        assert "claude-team" not in prompt
+        assert "automatically report your session" not in prompt
+
+    def test_codex_has_status_completion_instructions(self):
+        """Codex prompt should instruct to end with COMPLETED or BLOCKED."""
+        prompt = generate_worker_prompt("test", "Worker", agent_type="codex")
+        assert "COMPLETED" in prompt
+        assert "BLOCKED" in prompt
+
+    def test_codex_beads_workflow_same_as_claude(self):
+        """Codex beads workflow should match Claude's (same commands)."""
+        codex_prompt = generate_worker_prompt("test", "Worker", agent_type="codex", bead="cic-123")
+        claude_prompt = generate_worker_prompt("test", "Worker", agent_type="claude", bead="cic-123")
+        # Both should have the same beads commands
+        assert "bd --no-db update cic-123" in codex_prompt
+        assert "bd --no-db update cic-123" in claude_prompt
+        assert "bd --no-db close cic-123" in codex_prompt
+        assert "bd --no-db close cic-123" in claude_prompt
+
+    def test_codex_with_bead_only(self):
+        """Codex with bead only should show assignment."""
+        prompt = generate_worker_prompt("test", "Worker", agent_type="codex", bead="cic-456")
+        assert "Your assignment is `cic-456`" in prompt
+        assert "bd show cic-456" in prompt
+        assert "Beads workflow" in prompt
+
+    def test_codex_with_custom_prompt(self):
+        """Codex with custom prompt should show the task."""
+        prompt = generate_worker_prompt(
+            "test", "Worker",
+            agent_type="codex",
+            custom_prompt="Fix the auth bug"
+        )
+        assert "Fix the auth bug" in prompt
+        assert "The coordinator assigned you the following task" in prompt
+
+    def test_codex_with_worktree_includes_commit(self):
+        """Codex with worktree should include commit instructions."""
+        prompt = generate_worker_prompt(
+            "test", "Worker",
+            agent_type="codex",
+            use_worktree=True
+        )
+        assert "Commit when done" in prompt
+        assert "cherry-pick" in prompt
+
+
+class TestMixedTeamCoordinatorGuidance:
+    """Tests for coordinator guidance with mixed Claude/Codex teams."""
+
+    def test_single_agent_type_no_indicator(self):
+        """With only one agent type, no [type] indicator should appear."""
+        guidance = get_coordinator_guidance([
+            {"name": "Groucho", "bead": "cic-123", "agent_type": "claude"},
+            {"name": "Harpo", "bead": "cic-456", "agent_type": "claude"},
+        ])
+        assert "[claude]" not in guidance
+        assert "[codex]" not in guidance
+
+    def test_mixed_team_shows_type_indicators(self):
+        """With mixed team, should show [type] indicators."""
+        guidance = get_coordinator_guidance([
+            {"name": "Groucho", "bead": "cic-123", "agent_type": "claude"},
+            {"name": "GPT-4", "bead": "cic-456", "agent_type": "codex"},
+        ])
+        assert "[claude]" in guidance
+        assert "[codex]" in guidance
+
+    def test_mixed_team_shows_guidance_note(self):
+        """Mixed team should include guidance about different idle detection."""
+        guidance = get_coordinator_guidance([
+            {"name": "Groucho", "agent_type": "claude", "bead": "cic-123"},
+            {"name": "Codex-1", "agent_type": "codex", "bead": "cic-456"},
+        ])
+        assert "Mixed team note" in guidance
+        assert "Claude workers" in guidance
+        assert "Codex workers" in guidance
+
+    def test_default_agent_type_is_claude(self):
+        """Workers without explicit agent_type should default to claude."""
+        guidance = get_coordinator_guidance([
+            {"name": "Groucho", "bead": "cic-123"},  # No agent_type
+            {"name": "Codex-1", "agent_type": "codex", "bead": "cic-456"},
+        ])
+        # Should still be mixed team because one is explicitly codex
+        assert "[claude]" in guidance
+        assert "[codex]" in guidance
+
+    def test_codex_only_team_no_mixed_note(self):
+        """Codex-only team should not show mixed team note."""
+        guidance = get_coordinator_guidance([
+            {"name": "Codex-1", "agent_type": "codex", "bead": "cic-123"},
+            {"name": "Codex-2", "agent_type": "codex", "bead": "cic-456"},
+        ])
+        assert "Mixed team note" not in guidance
+        # Should still not show type indicators (not mixed)
+        assert "[codex]" not in guidance
