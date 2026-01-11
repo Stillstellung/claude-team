@@ -2,8 +2,14 @@
 Shared constants for Claude Team MCP tools.
 """
 
+from pathlib import Path
+
 # Default page size for conversation history pagination
 CONVERSATION_PAGE_SIZE = 5
+
+# Directory for Codex JSONL output capture
+# Codex streams JSONL to stdout; we pipe it through tee to this directory
+CODEX_JSONL_DIR = Path.home() / ".claude-team" / "codex"
 
 # Hint appended to messages sent to workers
 WORKER_MESSAGE_HINT = "\n\n---\n(Note: Use the `bd_help` tool for guidance on using beads to track progress and add comments.)"

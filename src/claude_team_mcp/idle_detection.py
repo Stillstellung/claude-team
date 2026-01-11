@@ -1,14 +1,22 @@
 """
 Idle Detection for Claude Team Workers
 
-Detects when workers are idle (finished responding) using Stop hook signals.
-Workers are spawned with a Stop hook that fires when Claude finishes responding.
-The hook embeds a session ID marker in the JSONL - if it fired with no subsequent
-messages, the worker is idle.
+Supports two detection modes:
 
-Binary state model:
-- Idle: Stop hook fired, no messages after it
-- Working: Either no stop hook yet, or messages exist after the last one
+1. Claude Code (Stop Hook Detection):
+   Workers are spawned with a Stop hook that fires when Claude finishes responding.
+   The hook embeds a session ID marker in the JSONL - if it fired with no subsequent
+   messages, the worker is idle.
+   Binary state model:
+   - Idle: Stop hook fired, no messages after it
+   - Working: Either no stop hook yet, or messages exist after the last one
+
+2. Codex (JSONL Event Detection):
+   Codex streams JSONL events to stdout. We pipe this through tee to capture it.
+   A turn is complete when we see TurnCompleted or TurnFailed events.
+   Binary state model:
+   - Idle: Last event is TurnCompleted or TurnFailed
+   - Working: No terminal event yet, or new TurnStarted after last terminal
 """
 
 import asyncio
@@ -17,6 +25,9 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+import msgspec
+
+from .schemas.codex import TurnCompleted, TurnFailed, TurnStarted, decode_event
 from .session_state import is_session_stopped
 
 logger = logging.getLogger("claude-team-mcp")
@@ -28,7 +39,7 @@ DEFAULT_POLL_INTERVAL = 2.0
 
 def is_idle(jsonl_path: Path, session_id: str) -> bool:
     """
-    Check if a session is idle (finished responding).
+    Check if a Claude Code session is idle (finished responding).
 
     A session is idle if its Stop hook has fired and no messages
     have been sent after it.
@@ -43,6 +54,75 @@ def is_idle(jsonl_path: Path, session_id: str) -> bool:
     if not jsonl_path.exists():
         return False
     return is_session_stopped(jsonl_path, session_id)
+
+
+def is_codex_idle(jsonl_path: Path) -> bool:
+    """
+    Check if a Codex session is idle by parsing JSONL for terminal events.
+
+    A Codex session is idle if:
+    1. The JSONL contains at least one TurnCompleted or TurnFailed event
+    2. The last turn-related event is TurnCompleted or TurnFailed
+       (not TurnStarted, which would indicate a new turn began)
+
+    We parse from the end of the file for efficiency, since the terminal
+    event will be near the end.
+
+    Args:
+        jsonl_path: Path to the Codex JSONL output file
+
+    Returns:
+        True if idle (turn completed/failed), False if working or file not found
+    """
+    if not jsonl_path.exists():
+        return False
+
+    try:
+        # Read from the end of the file for efficiency
+        # Most JSONL files are small enough to read entirely, but for large files
+        # we only need to check the last few KB for the terminal event
+        file_size = jsonl_path.stat().st_size
+        if file_size == 0:
+            return False
+
+        # Read last 50KB (should be more than enough for terminal events)
+        read_size = min(file_size, 50000)
+        with open(jsonl_path, "rb") as f:
+            if file_size > read_size:
+                f.seek(file_size - read_size)
+                # Skip partial first line
+                f.readline()
+            content = f.read()
+
+        # Parse lines from end to find the last turn-related event
+        lines = content.strip().split(b"\n")
+
+        # Scan from end looking for turn lifecycle events
+        for line in reversed(lines):
+            if not line.strip():
+                continue
+
+            try:
+                event = decode_event(line)
+
+                # Check for terminal events (turn finished)
+                if isinstance(event, (TurnCompleted, TurnFailed)):
+                    return True
+
+                # If we hit a TurnStarted, a new turn began - not idle
+                if isinstance(event, TurnStarted):
+                    return False
+
+            except msgspec.DecodeError:
+                # Skip malformed lines (could be partial write)
+                continue
+
+        # No turn events found - session hasn't completed any turns yet
+        return False
+
+    except (OSError, IOError) as e:
+        logger.warning(f"Error reading Codex JSONL {jsonl_path}: {e}")
+        return False
 
 
 async def wait_for_idle(

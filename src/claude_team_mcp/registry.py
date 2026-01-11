@@ -10,12 +10,15 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Literal, Optional
 
 if TYPE_CHECKING:
     from iterm2.session import Session as ItermSession
 
 from .session_state import get_project_dir, parse_session
+
+# Type alias for supported agent types
+AgentType = Literal["claude", "codex"]
 
 
 @dataclass(frozen=True)
@@ -87,6 +90,12 @@ class ManagedSession:
     # Terminal-agnostic identifier (auto-populated from iterm_session if not set)
     terminal_id: Optional[TerminalId] = None
 
+    # Agent type: "claude" (default) or "codex"
+    agent_type: AgentType = "claude"
+
+    # Codex-specific: path to captured JSONL output (set during spawn)
+    codex_jsonl_path: Optional[Path] = None
+
     def __post_init__(self):
         """Auto-populate terminal_id from iterm_session if not set."""
         if self.terminal_id is None and self.iterm_session is not None:
@@ -94,7 +103,7 @@ class ManagedSession:
 
     def to_dict(self) -> dict:
         """Convert to dictionary for MCP tool responses."""
-        return {
+        result = {
             "session_id": self.session_id,
             "terminal_id": str(self.terminal_id) if self.terminal_id else None,
             "name": self.name or self.session_id,
@@ -106,7 +115,14 @@ class ManagedSession:
             "coordinator_annotation": self.coordinator_annotation,
             "worktree_path": str(self.worktree_path) if self.worktree_path else None,
             "main_repo_path": str(self.main_repo_path) if self.main_repo_path else None,
+            "agent_type": self.agent_type,
         }
+        # Include codex_jsonl_path only for Codex agents
+        if self.agent_type == "codex":
+            result["codex_jsonl_path"] = (
+                str(self.codex_jsonl_path) if self.codex_jsonl_path else None
+            )
+        return result
 
     def update_activity(self) -> None:
         """Update the last_activity timestamp."""
@@ -166,20 +182,31 @@ class ManagedSession:
 
     def is_idle(self) -> bool:
         """
-        Check if this session is idle using stop hook detection.
+        Check if this session is idle.
 
-        A session is idle if its Stop hook has fired and no messages
-        have been sent after it.
+        For Claude: Uses stop hook detection - session is idle if its Stop hook
+        has fired and no messages have been sent after it.
+
+        For Codex: Parses the captured JSONL output for TurnCompleted/TurnFailed
+        events which indicate the turn has finished.
 
         Returns:
             True if idle, False if working or JSONL not available
         """
-        from .idle_detection import is_idle as check_is_idle
+        if self.agent_type == "codex":
+            from .idle_detection import is_codex_idle
 
-        jsonl_path = self.get_jsonl_path()
-        if not jsonl_path or not jsonl_path.exists():
-            return False
-        return check_is_idle(jsonl_path, self.session_id)
+            if not self.codex_jsonl_path or not self.codex_jsonl_path.exists():
+                return False
+            return is_codex_idle(self.codex_jsonl_path)
+        else:
+            # Default: Claude Code with Stop hook detection
+            from .idle_detection import is_idle as check_is_idle
+
+            jsonl_path = self.get_jsonl_path()
+            if not jsonl_path or not jsonl_path.exists():
+                return False
+            return check_is_idle(jsonl_path, self.session_id)
 
     def get_conversation_stats(self) -> dict | None:
         """

@@ -1,5 +1,5 @@
 """
-Tests for idle detection (Stop hook based).
+Tests for idle detection (Stop hook based and Codex JSONL based).
 """
 
 import asyncio
@@ -9,6 +9,7 @@ import json
 
 from claude_team_mcp.idle_detection import (
     is_idle,
+    is_codex_idle,
     wait_for_idle,
     wait_for_any_idle,
     wait_for_all_idle,
@@ -303,3 +304,154 @@ class TestCohortIdleDetection:
 
         path1.unlink()
         path2.unlink()
+
+
+class TestIsCodexIdle:
+    """Test Codex idle detection via JSONL parsing."""
+
+    def _write_codex_jsonl(self, lines: list[str]) -> Path:
+        """Write Codex JSONL lines to a temp file."""
+        f = NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False)
+        for line in lines:
+            f.write(line.strip() + "\n")
+        f.close()
+        return Path(f.name)
+
+    def test_idle_when_turn_completed(self):
+        """Test is_codex_idle returns True when TurnCompleted event is present."""
+        lines = [
+            '{"type":"thread.started","thread_id":"thread_abc"}',
+            '{"type":"turn.started"}',
+            '{"type":"item.completed","item":{"type":"agent_message","id":"m1","text":"Done"}}',
+            '{"type":"turn.completed","usage":{"input_tokens":100,"cached_input_tokens":0,"output_tokens":50}}',
+        ]
+        jsonl_path = self._write_codex_jsonl(lines)
+
+        result = is_codex_idle(jsonl_path)
+        assert result is True
+
+        jsonl_path.unlink()
+
+    def test_idle_when_turn_failed(self):
+        """Test is_codex_idle returns True when TurnFailed event is present."""
+        lines = [
+            '{"type":"thread.started","thread_id":"thread_abc"}',
+            '{"type":"turn.started"}',
+            '{"type":"turn.failed","error":{"message":"Rate limit exceeded"}}',
+        ]
+        jsonl_path = self._write_codex_jsonl(lines)
+
+        result = is_codex_idle(jsonl_path)
+        assert result is True
+
+        jsonl_path.unlink()
+
+    def test_not_idle_when_turn_started(self):
+        """Test is_codex_idle returns False when only TurnStarted is present."""
+        lines = [
+            '{"type":"thread.started","thread_id":"thread_abc"}',
+            '{"type":"turn.started"}',
+        ]
+        jsonl_path = self._write_codex_jsonl(lines)
+
+        result = is_codex_idle(jsonl_path)
+        assert result is False
+
+        jsonl_path.unlink()
+
+    def test_not_idle_when_new_turn_started_after_completion(self):
+        """Test is_codex_idle returns False when new turn started after previous completed."""
+        lines = [
+            '{"type":"thread.started","thread_id":"thread_abc"}',
+            '{"type":"turn.started"}',
+            '{"type":"turn.completed","usage":{"input_tokens":100,"cached_input_tokens":0,"output_tokens":50}}',
+            '{"type":"turn.started"}',  # New turn started
+        ]
+        jsonl_path = self._write_codex_jsonl(lines)
+
+        result = is_codex_idle(jsonl_path)
+        assert result is False
+
+        jsonl_path.unlink()
+
+    def test_not_idle_when_empty_file(self):
+        """Test is_codex_idle returns False for empty file."""
+        jsonl_path = self._write_codex_jsonl([])
+        # File is empty, but exists
+        with open(jsonl_path, "w") as f:
+            pass  # Create empty file
+
+        result = is_codex_idle(jsonl_path)
+        assert result is False
+
+        jsonl_path.unlink()
+
+    def test_not_idle_when_file_not_exists(self):
+        """Test is_codex_idle returns False when file doesn't exist."""
+        result = is_codex_idle(Path("/nonexistent/codex.jsonl"))
+        assert result is False
+
+    def test_not_idle_when_only_thread_started(self):
+        """Test is_codex_idle returns False when only ThreadStarted is present."""
+        lines = [
+            '{"type":"thread.started","thread_id":"thread_abc"}',
+        ]
+        jsonl_path = self._write_codex_jsonl(lines)
+
+        result = is_codex_idle(jsonl_path)
+        assert result is False
+
+        jsonl_path.unlink()
+
+    def test_idle_ignores_item_events(self):
+        """Test is_codex_idle correctly ignores item events and finds turn events."""
+        lines = [
+            '{"type":"thread.started","thread_id":"thread_abc"}',
+            '{"type":"turn.started"}',
+            '{"type":"item.started","item":{"type":"agent_message","id":"m1","text":"Working..."}}',
+            '{"type":"item.completed","item":{"type":"agent_message","id":"m1","text":"Working..."}}',
+            '{"type":"turn.completed","usage":{"input_tokens":100,"cached_input_tokens":0,"output_tokens":50}}',
+            '{"type":"item.started","item":{"type":"agent_message","id":"m2","text":"Final note"}}',
+            '{"type":"item.completed","item":{"type":"agent_message","id":"m2","text":"Final note"}}',
+        ]
+        jsonl_path = self._write_codex_jsonl(lines)
+
+        # Even though there are item events after TurnCompleted, the session is idle
+        # because TurnCompleted is the last turn-related event
+        result = is_codex_idle(jsonl_path)
+        assert result is True
+
+        jsonl_path.unlink()
+
+    def test_handles_malformed_lines(self):
+        """Test is_codex_idle gracefully handles malformed JSON lines."""
+        lines = [
+            '{"type":"thread.started","thread_id":"thread_abc"}',
+            '{"type":"turn.started"}',
+            '{malformed json}',
+            '{"type":"turn.completed","usage":{"input_tokens":100,"cached_input_tokens":0,"output_tokens":50}}',
+        ]
+        jsonl_path = self._write_codex_jsonl(lines)
+
+        result = is_codex_idle(jsonl_path)
+        assert result is True
+
+        jsonl_path.unlink()
+
+    def test_handles_partial_writes(self):
+        """Test is_codex_idle handles files with incomplete final line."""
+        lines = [
+            '{"type":"thread.started","thread_id":"thread_abc"}',
+            '{"type":"turn.started"}',
+            '{"type":"turn.completed","usage":{"input_tokens":100,"cached_input_tokens":0,"output_tokens":50}}',
+        ]
+        jsonl_path = self._write_codex_jsonl(lines)
+
+        # Append a partial line (simulating in-progress write)
+        with open(jsonl_path, "a") as f:
+            f.write('{"type":"turn.sta')  # Incomplete line
+
+        result = is_codex_idle(jsonl_path)
+        assert result is True  # Should still detect the completed turn
+
+        jsonl_path.unlink()
