@@ -24,6 +24,7 @@ from ..iterm_utils import (
     create_multi_pane_layout,
     find_available_window,
     send_prompt,
+    send_prompt_for_agent,
     split_pane,
     start_agent_in_session,
     start_claude_in_session,
@@ -576,7 +577,8 @@ def register_tools(mcp: FastMCP, ensure_connection) -> None:
                 )
 
                 # Send prompt to the already-running agent (both Claude and Codex)
-                await send_prompt(pane_sessions[i], worker_prompt, submit=True)
+                # Use agent-specific timing (Codex needs longer delay before Enter)
+                await send_prompt_for_agent(pane_sessions[i], worker_prompt, agent_type=managed.agent_type)
 
             # Mark sessions ready
             result_sessions = {}
