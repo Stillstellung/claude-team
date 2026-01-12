@@ -96,6 +96,10 @@ async def send_prompt(session: "ItermSession", text: str, submit: bool = True) -
     The delay scales with text length since longer pastes take more time
     for the terminal to process.
 
+    Note: This function uses burst sending (all text at once), which works
+    for Claude Code but NOT for Codex. Use send_prompt_for_agent() when
+    the target agent is known.
+
     Args:
         session: iTerm2 session object
         text: The text to send
@@ -125,6 +129,56 @@ async def send_prompt(session: "ItermSession", text: str, submit: bool = True) -
 
         await asyncio.sleep(delay)
         await session.async_send_text(KEYS["enter"])
+
+
+# Minimum delay between characters for Codex input (in seconds).
+# Codex uses crossterm in raw mode which doesn't handle burst input well.
+# Testing showed 10ms is the minimum reliable delay; we use 12ms for safety.
+CODEX_CHAR_DELAY = 0.012
+
+
+async def send_prompt_for_agent(
+    session: "ItermSession",
+    text: str,
+    agent_type: str = "claude",
+    submit: bool = True,
+) -> None:
+    """
+    Send a prompt to an iTerm2 session, with agent-specific input handling.
+
+    Different agent CLIs have different terminal input processing behaviors:
+
+    - **Claude Code**: Handles burst input (all characters at once) correctly.
+      Uses bracketed paste mode with delay before Enter.
+
+    - **Codex**: Uses crossterm in raw mode with keyboard enhancement flags.
+      Burst input causes character drops - only the first character is processed.
+      Requires sending characters one-by-one with ~10ms delays between them.
+
+    Args:
+        session: iTerm2 session object
+        text: The text to send
+        agent_type: The agent type identifier ("claude" or "codex")
+        submit: If True, press Enter after sending text
+    """
+    import asyncio
+
+    if agent_type == "codex":
+        # Codex requires character-by-character sending with delays.
+        # Crossterm's raw mode keyboard processing doesn't handle burst input:
+        # when characters arrive too fast, only the first one is processed.
+        # Testing showed 10ms minimum delay is needed; we use 12ms for safety.
+        for char in text:
+            await session.async_send_text(char)
+            await asyncio.sleep(CODEX_CHAR_DELAY)
+
+        if submit:
+            # Small buffer after last character before Enter
+            await asyncio.sleep(0.05)
+            await session.async_send_text(KEYS["enter"])
+    else:
+        # Claude Code and other agents: use burst sending with delay before Enter
+        await send_prompt(session, text, submit=submit)
 
 
 async def read_screen(session: "ItermSession") -> list[str]:

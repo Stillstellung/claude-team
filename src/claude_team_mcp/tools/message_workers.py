@@ -19,7 +19,7 @@ from ..idle_detection import (
     wait_for_any_idle as wait_for_any_idle_impl,
     SessionInfo,
 )
-from ..iterm_utils import send_prompt
+from ..iterm_utils import send_prompt_for_agent
 from ..registry import SessionStatus
 from ..utils import error_response, HINTS, WORKER_MESSAGE_HINT
 
@@ -190,8 +190,14 @@ def register_tools(mcp: FastMCP) -> None:
                 # Append hint about bd_help tool to help workers understand beads
                 message_with_hint = message + WORKER_MESSAGE_HINT
 
-                # Send the message directly to the terminal (works for both Claude and Codex)
-                await send_prompt(session.iterm_session, message_with_hint, submit=True)
+                # Send the message using agent-specific input handling.
+                # Codex requires char-by-char sending; Claude handles burst input.
+                await send_prompt_for_agent(
+                    session.iterm_session,
+                    message_with_hint,
+                    agent_type=session.agent_type,
+                    submit=True,
+                )
 
                 return (sid, {
                     "success": True,
