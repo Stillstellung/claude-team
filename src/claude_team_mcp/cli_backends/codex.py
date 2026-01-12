@@ -73,11 +73,13 @@ class CodexCLI(AgentCLI):
         """
         Return patterns indicating Codex CLI is ready for input.
 
-        Codex in interactive mode shows a prompt when ready.
-        Based on observed Codex CLI v0.79.0 behavior.
+        Codex in interactive mode shows status bar when ready.
+        Updated for Codex CLI v0.80.0 behavior.
         """
         return [
-            "What can I help you with?",  # Main ready prompt
+            "context left",  # Status bar shows "100% context left"
+            "for shortcuts",  # Status bar shows "? for shortcuts"
+            "What can I help you with?",  # Legacy prompt (older versions)
             "codex>",  # Alternative prompt pattern
             "»",  # Codex uses this prompt symbol
             "Waiting for messages",  # Happy codex wrapper

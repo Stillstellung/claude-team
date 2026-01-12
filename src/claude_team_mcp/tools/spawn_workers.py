@@ -578,7 +578,9 @@ def register_tools(mcp: FastMCP, ensure_connection) -> None:
 
                 # Send prompt to the already-running agent (both Claude and Codex)
                 # Use agent-specific timing (Codex needs longer delay before Enter)
+                logger.info(f"Sending prompt to {managed.name} (agent_type={managed.agent_type}, chars={len(worker_prompt)})")
                 await send_prompt_for_agent(pane_sessions[i], worker_prompt, agent_type=managed.agent_type)
+                logger.info(f"Prompt sent to {managed.name}")
 
             # Mark sessions ready
             result_sessions = {}

@@ -26,10 +26,17 @@ from .utils import error_response, HINTS
 
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger("claude-team-mcp")
+# Add file handler for debugging
+_fh = logging.FileHandler("/tmp/claude-team-debug.log")
+_fh.setLevel(logging.DEBUG)
+_fh.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
+logger.addHandler(_fh)
+logging.getLogger().addHandler(_fh)  # Also capture root logger
+logger.info("=== Claude Team MCP Server Starting ===")
 
 
 # =============================================================================
