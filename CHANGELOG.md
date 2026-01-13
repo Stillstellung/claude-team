@@ -7,23 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Multi-agent CLI abstraction layer
+- Codex support: spawn, message, and monitor Codex workers
+- `CLAUDE_TEAM_CODEX_COMMAND` env var for custom Codex binary
+- Codex JSONL schema and parsing
+- Codex idle detection
+
+### Fixed
+- Codex ready patterns for v0.80.0
+- Dynamic delay for Codex based on prompt length
+- `read_worker_logs` now works for Codex sessions
+
 ## [0.3.2] - 2026-01-13
 
 ### Fixed
-- Codex ready patterns updated for v0.80.0
-- Dynamic delay for Codex based on prompt length
-- Agent-specific timing in spawn_workers for Codex prompt delivery
+- Skip `--settings` flag for custom commands like Happy
 
 ## [0.3.1] - 2026-01-10
 
 ### Added
-- Codex support for `message_workers`
-- `CLAUDE_TEAM_CODEX_COMMAND` env var support
-- Codex idle detection
-
-### Fixed
-- `read_worker_logs` now works for Codex sessions
-- Codex interactive mode with session file polling
+- `CLAUDE_TEAM_COMMAND` env var support for custom Claude binaries (e.g., Happy)
 
 ## [0.3.0] - 2026-01-05
 
