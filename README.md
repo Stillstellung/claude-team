@@ -62,7 +62,7 @@ This automatically configures the MCP server - no manual setup needed.
 Once published, install via:
 
 ```bash
-uvx --from claude-team-mcp claude-team
+uvx --from claude-team-mcp@latest claude-team
 ```
 
 ### From Source
@@ -89,7 +89,7 @@ Add to your Claude Code MCP settings. You can configure this at:
   "mcpServers": {
     "claude-team": {
       "command": "uvx",
-      "args": ["--from", "claude-team-mcp", "claude-team"]
+      "args": ["--from", "claude-team-mcp@latest", "claude-team"]
     }
   }
 }
