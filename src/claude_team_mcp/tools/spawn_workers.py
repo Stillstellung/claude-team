@@ -23,6 +23,7 @@ from ..iterm_utils import (
     MAX_PANES_PER_TAB,
     create_multi_pane_layout,
     find_available_window,
+    get_window_for_session,
     send_prompt,
     send_prompt_for_agent,
     split_pane,
@@ -324,36 +325,70 @@ def register_tools(mcp: FastMCP, ensure_connection) -> None:
             if layout == "auto":
                 # Try to find an existing window where the ENTIRE batch fits.
                 # This keeps spawn batches together rather than spreading across windows.
-                managed_iterm_ids: set[str] = {
-                    s.iterm_session.session_id
-                    for s in registry.list_all()
-                    if s.iterm_session is not None
-                }
-
-                # Find a window with enough space for ALL workers
-                result = await find_available_window(
-                    app,
-                    max_panes=MAX_PANES_PER_TAB,
-                    managed_session_ids=managed_iterm_ids,
-                )
-
                 target_tab = None
                 initial_pane_count = 0
                 first_session = None  # Session to split from
 
-                if result:
-                    window, tab, existing_session = result
-                    initial_pane_count = len(tab.sessions)
-                    available_slots = MAX_PANES_PER_TAB - initial_pane_count
+                # Prefer the coordinator's window when running inside iTerm2.
+                coordinator_session_id = os.environ.get("ITERM_SESSION_ID")
+                if coordinator_session_id:
+                    coordinator_session = None
+                    coordinator_tab = None
 
-                    if worker_count <= available_slots:
-                        # Entire batch fits in this window
-                        target_tab = tab
-                        first_session = existing_session
-                        logger.debug(
-                            f"Batch of {worker_count} fits in existing window "
-                            f"({initial_pane_count} panes, {available_slots} slots)"
+                    for window in app.terminal_windows:
+                        for tab in window.tabs:
+                            for session in tab.sessions:
+                                if session.session_id == coordinator_session_id:
+                                    coordinator_session = session
+                                    coordinator_tab = tab
+                                    break
+                            if coordinator_session:
+                                break
+                        if coordinator_session:
+                            break
+
+                    if coordinator_session and coordinator_tab:
+                        coordinator_window = await get_window_for_session(
+                            app, coordinator_session
                         )
+                        if coordinator_window is not None:
+                            initial_pane_count = len(coordinator_tab.sessions)
+                            available_slots = MAX_PANES_PER_TAB - initial_pane_count
+                            if worker_count <= available_slots:
+                                target_tab = coordinator_tab
+                                first_session = coordinator_session
+                                logger.debug(
+                                    "Using coordinator window "
+                                    f"({initial_pane_count} panes, {available_slots} slots)"
+                                )
+
+                if target_tab is None:
+                    managed_iterm_ids: set[str] = {
+                        s.iterm_session.session_id
+                        for s in registry.list_all()
+                        if s.iterm_session is not None
+                    }
+
+                    # Find a window with enough space for ALL workers
+                    result = await find_available_window(
+                        app,
+                        max_panes=MAX_PANES_PER_TAB,
+                        managed_session_ids=managed_iterm_ids,
+                    )
+
+                    if result:
+                        window, tab, existing_session = result
+                        initial_pane_count = len(tab.sessions)
+                        available_slots = MAX_PANES_PER_TAB - initial_pane_count
+
+                        if worker_count <= available_slots:
+                            # Entire batch fits in this window
+                            target_tab = tab
+                            first_session = existing_session
+                            logger.debug(
+                                f"Batch of {worker_count} fits in existing window "
+                                f"({initial_pane_count} panes, {available_slots} slots)"
+                            )
 
                 if target_tab:
                     # Reuse existing window - track pane count locally (iTerm objects stale)
