@@ -7,14 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-01-13
+
 ### Added
+- **Codex support**: spawn, message, and monitor Codex workers
 - Multi-agent CLI abstraction layer
-- Codex support: spawn, message, and monitor Codex workers
 - `CLAUDE_TEAM_CODEX_COMMAND` env var for custom Codex binary
 - Codex JSONL schema and parsing
 - Codex idle detection
+- Star Trek duos to worker name sets
 
 ### Fixed
+- Don't require `claude-team` iTerm2 profile to exist
 - Codex ready patterns for v0.80.0
 - Dynamic delay for Codex based on prompt length
 - `read_worker_logs` now works for Codex sessions
@@ -58,7 +62,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Worker monitoring and log reading
 - Basic MCP server implementation
 
-[Unreleased]: https://github.com/Martian-Engineering/claude-team/compare/v0.3.2...HEAD
+[Unreleased]: https://github.com/Martian-Engineering/claude-team/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/Martian-Engineering/claude-team/compare/v0.3.2...v0.4.0
 [0.3.2]: https://github.com/Martian-Engineering/claude-team/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/Martian-Engineering/claude-team/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/Martian-Engineering/claude-team/compare/v0.2.1...v0.3.0
