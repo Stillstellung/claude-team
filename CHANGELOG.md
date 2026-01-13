@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-01-13
+
+### Added
+- Handle worktree name collisions with incrementing suffix (e.g., `feature-1`, `feature-2`)
+
 ## [0.4.0] - 2026-01-13
 
 ### Added
@@ -62,7 +67,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Worker monitoring and log reading
 - Basic MCP server implementation
 
-[Unreleased]: https://github.com/Martian-Engineering/claude-team/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/Martian-Engineering/claude-team/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/Martian-Engineering/claude-team/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/Martian-Engineering/claude-team/compare/v0.3.2...v0.4.0
 [0.3.2]: https://github.com/Martian-Engineering/claude-team/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/Martian-Engineering/claude-team/compare/v0.3.0...v0.3.1

@@ -2,7 +2,7 @@
   "mcpServers": {
     "claude-team": {
       "command": "uvx",
-      "args": ["--from", "claude-team-mcp", "claude-team"]
+      "args": ["--from", "claude-team-mcp@latest", "claude-team"]
     }
   }
 }
