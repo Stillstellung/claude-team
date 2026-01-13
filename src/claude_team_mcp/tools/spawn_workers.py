@@ -30,11 +30,7 @@ from ..iterm_utils import (
     start_claude_in_session,
 )
 from ..names import pick_names_for_count
-from ..profile import (
-    PROFILE_NAME,
-    apply_appearance_colors,
-    get_or_create_profile,
-)
+from ..profile import apply_appearance_colors
 from ..registry import SessionStatus
 from ..utils import HINTS, error_response, get_worktree_beads_dir
 from ..worker_prompt import generate_worker_prompt, get_coordinator_guidance
@@ -208,9 +204,6 @@ def register_tools(mcp: FastMCP, ensure_connection) -> None:
         connection, app = await ensure_connection(app_ctx)
 
         try:
-            # Ensure the claude-team profile exists
-            await get_or_create_profile(connection)
-
             # Get base session index for color generation
             base_index = registry.count()
 
@@ -377,7 +370,7 @@ def register_tools(mcp: FastMCP, ensure_connection) -> None:
                                 first_session,
                                 vertical=True,
                                 before=False,
-                                profile=PROFILE_NAME,
+                                profile=None,
                                 profile_customizations=profile_customizations[i],
                             )
                         elif local_pane_count == 2:
@@ -387,7 +380,7 @@ def register_tools(mcp: FastMCP, ensure_connection) -> None:
                                 first_session,
                                 vertical=False,
                                 before=False,
-                                profile=PROFILE_NAME,
+                                profile=None,
                                 profile_customizations=profile_customizations[i],
                             )
                         else:  # local_pane_count == 3
@@ -398,7 +391,7 @@ def register_tools(mcp: FastMCP, ensure_connection) -> None:
                                 tr_session,
                                 vertical=False,
                                 before=False,
-                                profile=PROFILE_NAME,
+                                profile=None,
                                 profile_customizations=profile_customizations[i],
                             )
 
@@ -431,7 +424,7 @@ def register_tools(mcp: FastMCP, ensure_connection) -> None:
                     panes = await create_multi_pane_layout(
                         connection,
                         window_layout,
-                        profile=PROFILE_NAME,
+                        profile=None,
                         profile_customizations=customizations_dict,
                     )
 
@@ -460,7 +453,7 @@ def register_tools(mcp: FastMCP, ensure_connection) -> None:
                 panes = await create_multi_pane_layout(
                     connection,
                     window_layout,
-                    profile=PROFILE_NAME,
+                    profile=None,
                     profile_customizations=customizations_dict,
                 )
 

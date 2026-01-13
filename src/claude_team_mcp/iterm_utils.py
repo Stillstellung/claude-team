@@ -294,19 +294,15 @@ async def create_window(
     from iterm2.window import Window
 
     # Create the window
-    # Note: We conditionally pass profile_customizations only when not None
-    # due to iterm2 library's type stubs not marking it as Optional
+    # Build kwargs conditionally - only include profile if explicitly set,
+    # otherwise let iTerm2 use its default. Empty string causes INVALID_PROFILE_NAME.
+    kwargs: dict = {}
+    if profile is not None:
+        kwargs["profile"] = profile
     if profile_customizations is not None:
-        window = await Window.async_create(
-            connection,
-            profile=profile if profile is not None else "",
-            profile_customizations=profile_customizations,
-        )
-    else:
-        window = await Window.async_create(
-            connection,
-            profile=profile if profile is not None else "",
-        )
+        kwargs["profile_customizations"] = profile_customizations
+
+    window = await Window.async_create(connection, **kwargs)
 
     if window is None:
         raise RuntimeError("Failed to create iTerm2 window")
@@ -356,12 +352,14 @@ async def split_pane(
     Returns:
         The new session created in the split pane.
     """
-    return await session.async_split_pane(
-        vertical=vertical,
-        before=before,
-        profile=profile,
-        profile_customizations=profile_customizations,
-    )
+    # Build kwargs conditionally - only include profile if explicitly set
+    kwargs: dict = {"vertical": vertical, "before": before}
+    if profile is not None:
+        kwargs["profile"] = profile
+    if profile_customizations is not None:
+        kwargs["profile_customizations"] = profile_customizations
+
+    return await session.async_split_pane(**kwargs)
 
 
 async def close_pane(session: "ItermSession", force: bool = False) -> bool:
