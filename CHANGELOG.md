@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-01-21
+
+### Added
+- **Issue tracker abstraction**: Support for both Beads and Pebbles issue trackers
+- Auto-detection of issue tracker based on project structure (`.beads/` vs `.pebbles/`)
+- `issue_tracker_help` tool replaces `bd_help` with tracker-agnostic guidance
+- Comprehensive test suite for issue tracker detection and integration
+
+### Changed
+- Worker prompts now use generic issue tracker commands instead of hardcoded Beads
+- Worktree detection improved with better branch name parsing
+
 ## [0.5.0] - 2026-01-13
 
 ### Added
