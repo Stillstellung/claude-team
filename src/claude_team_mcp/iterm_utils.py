@@ -387,6 +387,60 @@ async def close_pane(session: "ItermSession", force: bool = False) -> bool:
 # Marker used to detect shell readiness - must be unique enough not to appear randomly
 SHELL_READY_MARKER = "CLAUDE_TEAM_READY_7f3a9c"
 
+# Common shell prompt endings to detect when shell has started
+# These appear at the end of the prompt line when the shell is ready for input
+SHELL_PROMPT_PATTERNS = [
+    "$ ",      # bash, sh default
+    "% ",      # zsh default
+    "> ",      # some shells, continuation
+    "# ",      # root prompt
+    "❯ ",      # starship, pure, etc.
+    "➜ ",      # oh-my-zsh robbyrussell theme
+    "λ ",      # some custom prompts
+]
+
+
+async def _wait_for_shell_prompt(
+    session: "ItermSession",
+    timeout_seconds: float = 5.0,
+    poll_interval: float = 0.1,
+) -> bool:
+    """
+    Wait for a shell prompt to appear, indicating the shell has started.
+
+    Polls the screen content looking for common shell prompt patterns.
+    This should be called before sending any commands to ensure the shell
+    process is running and ready to receive input.
+
+    Args:
+        session: iTerm2 session to monitor
+        timeout_seconds: Maximum time to wait for prompt
+        poll_interval: Time between screen content checks
+
+    Returns:
+        True if prompt detected, False if timeout was reached
+    """
+    import asyncio
+    import time
+
+    start_time = time.monotonic()
+    while (time.monotonic() - start_time) < timeout_seconds:
+        try:
+            content = await read_screen_text(session)
+            # Check if any line ends with a prompt pattern
+            for line in content.split('\n'):
+                # Don't strip - we want to check the actual line ending
+                for pattern in SHELL_PROMPT_PATTERNS:
+                    if line.rstrip().endswith(pattern.rstrip()):
+                        logger.debug(f"Shell prompt detected: {repr(line[-20:])}")
+                        return True
+        except Exception:
+            pass
+        await asyncio.sleep(poll_interval)
+
+    logger.warning(f"Timeout waiting for shell prompt ({timeout_seconds}s)")
+    return False
+
 
 async def wait_for_shell_ready(
     session: "ItermSession",
@@ -396,9 +450,10 @@ async def wait_for_shell_ready(
     """
     Wait for the shell to be ready to accept input.
 
-    Sends an echo command with a unique marker and waits for it to appear
-    in the terminal output. This proves the shell is accepting and executing
-    commands, regardless of prompt style.
+    First waits for a shell prompt to appear (indicating the shell process
+    has started), then sends an echo command with a unique marker and waits
+    for it to appear in the terminal output. This proves the shell is
+    accepting and executing commands.
 
     Args:
         session: iTerm2 session to monitor
@@ -411,14 +466,25 @@ async def wait_for_shell_ready(
     import asyncio
     import time
 
-    # Send the marker command
+    start_time = time.monotonic()
+
+    # Phase 1: Wait for shell prompt to appear (shell process has started)
+    prompt_timeout = min(5.0, timeout_seconds / 2)
+    if not await _wait_for_shell_prompt(session, prompt_timeout, poll_interval):
+        logger.warning("Shell prompt not detected, attempting echo anyway")
+
+    # Small delay to ensure shell is fully ready after prompt appears
+    await asyncio.sleep(0.1)
+
+    # Phase 2: Send the marker command and verify it executes
     await send_prompt(session, f'echo "{SHELL_READY_MARKER}"')
 
     # Wait for marker to appear in output (not in the command itself)
     # We look for the marker at the start of a line, which indicates the echo
     # actually executed and produced output, not just that the command was displayed
-    start_time = time.monotonic()
-    while (time.monotonic() - start_time) < timeout_seconds:
+    remaining_time = timeout_seconds - (time.monotonic() - start_time)
+    marker_start = time.monotonic()
+    while (time.monotonic() - marker_start) < remaining_time:
         try:
             content = await read_screen_text(session)
             # Check each line - the output will be the marker on its own line

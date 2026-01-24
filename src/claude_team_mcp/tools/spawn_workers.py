@@ -420,8 +420,10 @@ def register_tools(mcp: FastMCP, ensure_connection) -> None:
                                 )
                             else:
                                 # Second split: horizontal from first worker (stack on right)
+                                # Guard against empty created_sessions (if first split failed)
+                                split_from = created_sessions[0] if created_sessions else first_session
                                 new_session = await split_pane(
-                                    created_sessions[0],
+                                    split_from,
                                     vertical=False,
                                     before=False,
                                     profile=None,
