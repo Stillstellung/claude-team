@@ -168,3 +168,6 @@
 {"type":"close","timestamp":"2026-01-28T20:09:42.814136Z","issue_id":"cic-b5d","payload":{}}
 {"type":"status_update","timestamp":"2026-01-28T20:05:59.985932Z","issue_id":"cic-774","payload":{"status":"in_progress"}}
 {"type":"close","timestamp":"2026-01-28T20:07:53.546775Z","issue_id":"cic-774","payload":{}}
+{"type":"create","timestamp":"2026-01-28T21:12:30.144634Z","issue_id":"cic-c0b","payload":{"description":"close_workers sends /exit for all agent types, but this is Claude-specific. Codex uses Ctrl+C to quit (possibly double-press). Check session.agent_type before sending quit command.","priority":"1","title":"close_workers sends /exit for Codex workers - should use Ctrl+C","type":"bug"}}
+{"type":"close","timestamp":"2026-01-28T21:25:28.072194Z","issue_id":"cic-c0b","payload":{}}
+{"type":"status_update","timestamp":"2026-01-28T21:31:46.873894Z","issue_id":"cic-c0b","payload":{"status":"in_progress"}}
