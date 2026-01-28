@@ -6,6 +6,7 @@ Allows a "manager" Claude Code session to spawn and coordinate multiple
 "worker" Claude Code sessions.
 """
 
+import functools
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -18,6 +19,8 @@ if TYPE_CHECKING:
 
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.session import ServerSession
+
+from claude_team.poller import WorkerPoller
 
 from .iterm_utils import read_screen_text
 from .registry import SessionRegistry
@@ -44,6 +47,7 @@ logger.info("=== Claude Team MCP Server Starting ===")
 # =============================================================================
 
 _global_registry: SessionRegistry | None = None
+_global_poller: WorkerPoller | None = None
 
 
 def get_global_registry() -> SessionRegistry:
@@ -53,6 +57,15 @@ def get_global_registry() -> SessionRegistry:
         _global_registry = SessionRegistry()
         logger.info("Created global singleton registry")
     return _global_registry
+
+
+def get_global_poller(registry: SessionRegistry) -> WorkerPoller:
+    """Get or create the global singleton poller."""
+    global _global_poller
+    if _global_poller is None:
+        _global_poller = WorkerPoller(registry)
+        logger.info("Created global singleton poller")
+    return _global_poller
 
 
 # =============================================================================
@@ -147,7 +160,10 @@ async def ensure_connection(app_ctx: "AppContext") -> tuple["ItermConnection", "
 
 
 @asynccontextmanager
-async def app_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
+async def app_lifespan(
+    server: FastMCP,
+    enable_poller: bool = False,
+) -> AsyncIterator[AppContext]:
     """
     Manage iTerm2 connection lifecycle.
 
@@ -185,16 +201,21 @@ async def app_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
         logger.error("Make sure iTerm2 is running and Python API is enabled")
         raise RuntimeError("Could not connect to iTerm2") from e
 
-    # Create application context with singleton registry (persists across sessions)
+    # Create application context with singleton registry (persists across sessions).
     ctx = AppContext(
         iterm_connection=connection,
         iterm_app=app,
         registry=get_global_registry(),
     )
+    poller: WorkerPoller | None = None
+    if enable_poller:
+        poller = get_global_poller(ctx.registry)
+        poller.start()
 
     try:
         yield ctx
     finally:
+        # Keep the global poller running across per-session lifespans.
         # Cleanup: close any remaining sessions gracefully
         logger.info("Claude Team MCP Server shutting down...")
         if ctx.registry.count() > 0:
@@ -207,11 +228,15 @@ async def app_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
 # =============================================================================
 
 
-def create_mcp_server(host: str = "127.0.0.1", port: int = 8766) -> FastMCP:
+def create_mcp_server(
+    host: str = "127.0.0.1",
+    port: int = 8766,
+    enable_poller: bool = False,
+) -> FastMCP:
     """Create and configure the FastMCP server instance."""
     server = FastMCP(
         "Claude Team Manager",
-        lifespan=app_lifespan,
+        lifespan=functools.partial(app_lifespan, enable_poller=enable_poller),
         host=host,
         port=port,
     )
@@ -354,7 +379,7 @@ def run_server(transport: str = "stdio", port: int = 8766):
     if transport == "streamable-http":
         logger.info(f"Starting Claude Team MCP Server (HTTP on port {port})...")
         # Create server with configured port for HTTP mode
-        server = create_mcp_server(host="127.0.0.1", port=port)
+        server = create_mcp_server(host="127.0.0.1", port=port, enable_poller=True)
         server.run(transport="streamable-http")
     else:
         logger.info("Starting Claude Team MCP Server (stdio)...")
