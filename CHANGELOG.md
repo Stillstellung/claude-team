@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-01-29
+
+### Added
+- **Tmux terminal backend**: Run workers in tmux sessions instead of iTerm2
+- Terminal backend abstraction layer (`TerminalBackend` protocol)
+- Backend auto-detection: uses tmux if `$TMUX` is set, otherwise iTerm
+- `CLAUDE_TEAM_TERMINAL_BACKEND` env var for explicit backend selection
+- One tmux window per worker with descriptive naming (`<name> | <project> [<issue>]`)
+- Tmux discovery and adoption of orphaned worker sessions
+- Codex discovery/adopt fallbacks for tmux
+- New test suite: `tests/test_tmux_backend.py`
+
+### Fixed
+- Close Codex via Ctrl+C instead of `/exit`
+- `wait_idle_workers` Codex idle detection
+- Explicit worktree config now fails loudly instead of silent fallback
+
+### Changed
+- All tools refactored to operate on `TerminalSession` rather than iTerm-specific handles
+- Default behavior (no explicit worktree config) still falls back but returns warnings
+
 ## [0.6.1] - 2026-01-21
 
 ### Fixed
