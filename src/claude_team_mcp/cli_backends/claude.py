@@ -10,6 +10,45 @@ from typing import Literal
 
 from .base import AgentCLI
 
+# Built-in default command.
+_DEFAULT_COMMAND = "claude"
+
+# Environment variable for command override (takes highest precedence).
+_ENV_VAR = "CLAUDE_TEAM_COMMAND"
+
+
+def get_claude_command() -> str:
+    """
+    Get the Claude CLI command with precedence: env var > config > default.
+
+    Resolution order:
+    1. CLAUDE_TEAM_COMMAND environment variable (for override)
+    2. Config file commands.claude setting
+    3. Built-in default "claude"
+
+    Returns:
+        The command to use for Claude CLI
+    """
+    # Environment variable takes highest precedence (for override).
+    env_val = os.environ.get(_ENV_VAR)
+    if env_val:
+        return env_val
+
+    # Try config file next.
+    # Import here to avoid circular imports and lazy-load config.
+    try:
+        from ..config import ConfigError, load_config
+
+        config = load_config()
+    except ConfigError:
+        return _DEFAULT_COMMAND
+
+    if config.commands.claude:
+        return config.commands.claude
+
+    # Fall back to built-in default.
+    return _DEFAULT_COMMAND
+
 
 class ClaudeCLI(AgentCLI):
     """
@@ -31,10 +70,12 @@ class ClaudeCLI(AgentCLI):
         """
         Return the Claude CLI command.
 
-        Respects CLAUDE_TEAM_COMMAND environment variable for overrides
-        (e.g., "happy" wrapper).
+        Resolution order:
+        1. CLAUDE_TEAM_COMMAND environment variable (for override)
+        2. Config file commands.claude setting
+        3. Built-in default "claude"
         """
-        return os.environ.get("CLAUDE_TEAM_COMMAND", "claude")
+        return get_claude_command()
 
     def build_args(
         self,
@@ -102,8 +143,7 @@ class ClaudeCLI(AgentCLI):
 
     def _is_default_command(self) -> bool:
         """Check if using the default 'claude' command (not a custom wrapper)."""
-        cmd = os.environ.get("CLAUDE_TEAM_COMMAND", "claude")
-        return cmd == "claude"
+        return get_claude_command() == _DEFAULT_COMMAND
 
 
 # Singleton instance for convenience
