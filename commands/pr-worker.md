@@ -28,28 +28,11 @@ Create a pull request from a worker's branch: $ARGUMENTS
    git push -u origin <branch>
    ```
 
-6. Generate an architecture diagram:
-   - Create a self-contained HTML file that visually documents the PR's architecture
-   - Include: module structure, data flow, key types/interfaces, integration points
-   - Use a dark theme (`#0d1117` background), styled for readability
-   - Tailor the content to the PR — show what's most useful for reviewers:
-     - For new modules: schema, module layout, consumer map
-     - For refactors: before/after structure, migration paths
-     - For features: data flow, integration points, config/API surface
-   - Write to `/tmp/pr-architecture-<branch>.html`
-   - Upload as a public gist:
-     ```bash
-     gh gist create /tmp/pr-architecture-<branch>.html --public -d "<PR title> — Architecture"
-     ```
-   - Build the preview URL: `https://gist.githack.com/<user>/<gist-id>/raw/<filename>.html`
-
-7. Create PR using gh CLI (targeting parent branch), including the architecture link:
+6. Create PR using gh CLI (targeting parent branch):
    ```bash
    gh pr create --base <parent-branch> --title "<issue-id>: <summary>" --body "$(cat <<'EOF'
    ## Summary
    <bullet points from commits>
-
-   📐 **[Architecture Diagram](<githack-preview-url>)** — visual overview of this PR's design.
 
    ## Changes
    <list of changed files>
@@ -64,7 +47,7 @@ Create a pull request from a worker's branch: $ARGUMENTS
    )"
    ```
 
-8. Report the PR URL
+7. Report the PR URL
 
 ## Output Format
 
