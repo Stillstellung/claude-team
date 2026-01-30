@@ -7,6 +7,7 @@ Provides a TerminalBackend implementation backed by tmux CLI commands.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import re
 import subprocess
 import uuid
@@ -44,7 +45,11 @@ ISSUE_ID_PATTERN = re.compile(r"\b[A-Za-z][A-Za-z0-9]*-[A-Za-z0-9]*\d[A-Za-z0-9]
 
 SHELL_READY_MARKER = "CLAUDE_TEAM_READY_7f3a9c"
 CODEX_PRE_ENTER_DELAY = 0.5
-TMUX_SESSION_NAME = "claude-team"
+TMUX_SESSION_PREFIX = "claude-team"
+TMUX_SESSION_HASH_LEN = 8
+TMUX_SESSION_SLUG_MAX = 32
+TMUX_SESSION_FALLBACK = "project"
+TMUX_SESSION_PREFIXED = f"{TMUX_SESSION_PREFIX}-"
 
 LAYOUT_PANE_NAMES = {
     "single": ["main"],
@@ -60,6 +65,47 @@ LAYOUT_SELECT = {
     "horizontal": "even-vertical",
     "quad": "tiled",
 }
+
+
+# Normalize a project name into a tmux-safe slug.
+def _tmux_safe_slug(value: str) -> str:
+    slug = re.sub(r"[^A-Za-z0-9_-]+", "-", value.strip())
+    slug = slug.strip("-_")
+    if not slug:
+        return TMUX_SESSION_FALLBACK
+    if len(slug) > TMUX_SESSION_SLUG_MAX:
+        slug = slug[:TMUX_SESSION_SLUG_MAX].rstrip("-_")
+    return slug or TMUX_SESSION_FALLBACK
+
+
+def project_name_from_path(project_path: str | None) -> str | None:
+    """Return a display name for a project path, handling worktree paths."""
+    if not project_path:
+        return None
+    path = Path(project_path)
+    parts = path.parts
+    if ".worktrees" in parts:
+        worktrees_index = parts.index(".worktrees")
+        if worktrees_index > 0:
+            return parts[worktrees_index - 1]
+    return path.name
+
+
+def tmux_session_name_for_project(project_path: str | None) -> str:
+    """Return the per-project tmux session name for a given project path."""
+    project_name = project_name_from_path(project_path) or TMUX_SESSION_FALLBACK
+    slug = _tmux_safe_slug(project_name)
+    if project_path:
+        digest_source = project_path
+    else:
+        digest_source = uuid.uuid4().hex
+    digest = hashlib.sha1(digest_source.encode("utf-8")).hexdigest()[:TMUX_SESSION_HASH_LEN]
+    return f"{TMUX_SESSION_PREFIXED}{slug}-{digest}"
+
+
+# Determine whether a tmux session is managed by claude-team.
+def _is_managed_session_name(session_name: str) -> bool:
+    return session_name.startswith(TMUX_SESSION_PREFIXED)
 
 
 class TmuxBackend(TerminalBackend):
@@ -94,23 +140,24 @@ class TmuxBackend(TerminalBackend):
         profile: str | None = None,
         profile_customizations: Any | None = None,
     ) -> TerminalSession:
-        """Create a worker window in the claude-team tmux session."""
+        """Create a worker window in a per-project tmux session."""
         if profile or profile_customizations:
             raise ValueError("tmux backend does not support profiles")
 
         base_name = name or self._generate_window_name()
-        project_name = self._project_name_from_path(project_path)
+        project_name = project_name_from_path(project_path)
         resolved_issue_id = self._resolve_issue_id(issue_id, coordinator_annotation)
         window_name = self._format_window_name(base_name, project_name, resolved_issue_id)
+        session_name = tmux_session_name_for_project(project_path)
 
         # Ensure the dedicated session exists, then create a new window for this worker.
         try:
-            await self._run_tmux(["has-session", "-t", TMUX_SESSION_NAME])
+            await self._run_tmux(["has-session", "-t", session_name])
             output = await self._run_tmux(
                 [
                     "new-window",
                     "-t",
-                    TMUX_SESSION_NAME,
+                    session_name,
                     "-n",
                     window_name,
                     "-P",
@@ -124,7 +171,7 @@ class TmuxBackend(TerminalBackend):
                     "new-session",
                     "-d",
                     "-s",
-                    TMUX_SESSION_NAME,
+                    session_name,
                     "-n",
                     window_name,
                     "-P",
@@ -138,7 +185,7 @@ class TmuxBackend(TerminalBackend):
             raise RuntimeError("Failed to determine tmux pane id for new window")
 
         metadata = {
-            "session_name": TMUX_SESSION_NAME,
+            "session_name": session_name,
             "window_id": window_id,
             "window_index": window_index,
             "window_name": window_name,
@@ -295,13 +342,12 @@ class TmuxBackend(TerminalBackend):
         return panes
 
     async def list_sessions(self) -> list[TerminalSession]:
-        """List all tmux panes in the claude-team session."""
+        """List all tmux panes in claude-team-managed sessions."""
         try:
             output = await self._run_tmux(
                 [
                     "list-panes",
-                    "-t",
-                    TMUX_SESSION_NAME,
+                    "-a",
                     "-F",
                     "#{session_name}\t#{window_id}\t#{window_name}\t#{window_index}\t#{pane_index}\t#{pane_id}",
                 ]
@@ -320,6 +366,8 @@ class TmuxBackend(TerminalBackend):
             if len(parts) != 6:
                 continue
             session_name, window_id, window_name, window_index, pane_index, pane_id = parts
+            if not _is_managed_session_name(session_name):
+                continue
             sessions.append(
                 TerminalSession(
                     backend_id=self.backend_id,
@@ -349,8 +397,7 @@ class TmuxBackend(TerminalBackend):
             output = await self._run_tmux(
                 [
                     "list-panes",
-                    "-t",
-                    TMUX_SESSION_NAME,
+                    "-a",
                     "-F",
                     "#{session_name}\t#{window_id}\t#{window_index}\t#{pane_index}\t#{pane_active}\t#{pane_id}",
                 ]
@@ -368,6 +415,8 @@ class TmuxBackend(TerminalBackend):
             if len(parts) != 6:
                 continue
             session_name, window_id, window_index, pane_index, pane_active, pane_id = parts
+            if not _is_managed_session_name(session_name):
+                continue
             panes_by_window.setdefault((session_name, window_id, window_index), []).append(
                 {
                     "pane_id": pane_id,
@@ -575,18 +624,6 @@ class TmuxBackend(TerminalBackend):
             await asyncio.sleep(poll_interval)
 
         return False
-
-    # Extract a display name for the project from a project path.
-    def _project_name_from_path(self, project_path: str | None) -> str | None:
-        if not project_path:
-            return None
-        path = Path(project_path)
-        parts = path.parts
-        if ".worktrees" in parts:
-            worktrees_index = parts.index(".worktrees")
-            if worktrees_index > 0:
-                return parts[worktrees_index - 1]
-        return path.name
 
     # Resolve an issue id from explicit input or a coordinator annotation.
     def _resolve_issue_id(

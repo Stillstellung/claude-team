@@ -84,7 +84,7 @@ def register_tools(mcp: FastMCP, ensure_connection) -> None:
            - 4 workers: quad layout (2x2 grid)
 
         **tmux note:**
-           - Workers always get their own tmux window in the shared "claude-team" session.
+           - Workers get their own tmux window in a per-project claude-team session.
            - layout is ignored for tmux.
 
         **WorkerConfig fields:**
