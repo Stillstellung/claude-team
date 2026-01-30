@@ -64,6 +64,20 @@ def slugify(text: str) -> str:
     return text
 
 
+def short_slug(text: str, max_length: int = 30) -> str:
+    """
+    Create a slug suitable for compact identifiers.
+
+    Truncates long slugs to keep branch and directory names short,
+    while preserving the leading portion of the slug.
+    """
+    slug = slugify(text)
+    if len(slug) <= max_length:
+        return slug
+    return slug[:max_length].rstrip("-")
+
+
+
 def ensure_gitignore_entry(repo_path: Path, entry: str) -> bool:
     """
     Ensure an entry exists in the repository's .gitignore file.
