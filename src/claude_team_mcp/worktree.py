@@ -333,7 +333,7 @@ def create_local_worktree(
     if bead_id:
         # Bead-based naming: {bead_id}-{annotation}
         if annotation:
-            dir_name = f"{bead_id}-{slugify(annotation)}"
+            dir_name = f"{bead_id}-{short_slug(annotation)}"
         else:
             dir_name = bead_id
     else:
@@ -341,7 +341,7 @@ def create_local_worktree(
         short_uuid = uuid.uuid4().hex[:8]
         name_slug = slugify(worker_name)
         if annotation:
-            dir_name = f"{name_slug}-{short_uuid}-{slugify(annotation)}"
+            dir_name = f"{name_slug}-{short_uuid}-{short_slug(annotation)}"
         else:
             dir_name = f"{name_slug}-{short_uuid}"
 
