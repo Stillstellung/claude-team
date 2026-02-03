@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-02-03
+
+### Added
+- **Event log recovery**: On startup, the registry reconstructs worker state from `events.jsonl`. `list_workers` now shows all known workers (live + recovered) instead of returning empty after restart.
+  - `RecoveredSession` dataclass for restored workers (read-only, no terminal handle)
+  - `RecoveryReport` with counts of added/skipped/closed sessions
+  - Eager recovery at boot + lazy fallback in `list_workers`
+- **`worker_events` MCP tool**: Query the event log programmatically with timestamp filters, summaries, stuck worker detection, and project filtering. Replaces shell-script parsing of `events.jsonl`.
+- **`stale_threshold_minutes` config**: Configurable via `~/.claude-team/config.json` (`events.stale_threshold_minutes`, default: 10). `poll_worker_changes` reads from config when param not passed, tool param overrides.
+- **`source` field in `list_workers`**: Distinguishes `"registry"` (live) vs `"event_log"` (recovered) workers.
+- 98 new tests across 6 test files for recovery, worker_events, config, and poll_worker_changes.
+
+### Changed
+- **README**: Comprehensive rewrite — documents tmux backend, config file, Codex support, `poll_worker_changes`, HTTP mode, correct worktree paths, updated architecture diagram.
+
 ## [0.8.2] - 2026-02-02
 
 ### Fixed
@@ -129,7 +144,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Worker monitoring and log reading
 - Basic MCP server implementation
 
-[Unreleased]: https://github.com/Martian-Engineering/claude-team/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/Martian-Engineering/claude-team/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/Martian-Engineering/claude-team/compare/v0.8.2...v0.9.0
+[0.8.2]: https://github.com/Martian-Engineering/claude-team/compare/v0.8.0...v0.8.2
+[0.8.0]: https://github.com/Martian-Engineering/claude-team/compare/v0.7.0...v0.8.0
+[0.7.0]: https://github.com/Martian-Engineering/claude-team/compare/v0.6.1...v0.7.0
+[0.6.1]: https://github.com/Martian-Engineering/claude-team/compare/v0.6.0...v0.6.1
+[0.6.0]: https://github.com/Martian-Engineering/claude-team/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/Martian-Engineering/claude-team/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/Martian-Engineering/claude-team/compare/v0.3.2...v0.4.0
 [0.3.2]: https://github.com/Martian-Engineering/claude-team/compare/v0.3.1...v0.3.2
