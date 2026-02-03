@@ -4,6 +4,7 @@ List workers tool.
 Provides list_workers for viewing all managed Claude Code sessions.
 """
 
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -15,6 +16,8 @@ if TYPE_CHECKING:
 
 from ..registry import SessionStatus
 from ..utils import error_response
+
+logger = logging.getLogger("claude-team-mcp")
 
 
 def register_tools(mcp: FastMCP) -> None:
@@ -43,6 +46,22 @@ def register_tools(mcp: FastMCP) -> None:
         """
         app_ctx = ctx.request_context.lifespan_context
         registry = app_ctx.registry
+
+        # Lazy fallback: if registry is empty and recovery hasn't been attempted,
+        # try to recover from the event log. This handles edge cases where startup
+        # recovery may have failed or wasn't triggered.
+        from ..server import is_recovery_attempted, recover_registry
+
+        if not is_recovery_attempted() and len(registry.list_all()) == 0:
+            logger.info("Registry empty on first list_workers call, attempting lazy recovery...")
+            report = recover_registry(registry)
+            if report is not None:
+                logger.info(
+                    "Lazy recovery complete: added=%d, skipped=%d, closed=%d",
+                    report.added,
+                    report.skipped,
+                    report.closed,
+                )
 
         # Get sessions, optionally filtered by status
         if status_filter:
@@ -84,17 +103,26 @@ def register_tools(mcp: FastMCP) -> None:
                         filtered_sessions.append(session)
                 sessions = filtered_sessions
 
-        # Sort by created_at
-        sessions = sorted(sessions, key=lambda s: s.created_at)
+        # Sort by created_at (normalize to UTC-aware for mixed live/recovered)
+        from datetime import timezone as _tz
+
+        def _sort_key(s):
+            dt = s.created_at
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=_tz.utc)
+            return dt
+
+        sessions = sorted(sessions, key=_sort_key)
 
         # Convert to dicts and add message count + idle status
         workers = []
         for session in sessions:
             info = session.to_dict()
-            # Try to get conversation stats
-            state = session.get_conversation_state()
-            if state:
-                info["message_count"] = state.message_count
+            # Try to get conversation stats (only available on live ManagedSessions)
+            if hasattr(session, "get_conversation_state"):
+                state = session.get_conversation_state()
+                if state:
+                    info["message_count"] = state.message_count
             # Check idle using stop hook detection
             info["is_idle"] = session.is_idle()
             workers.append(info)
