@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.2] - 2026-02-02
+
+### Fixed
+- **tmux session naming**: Worktree paths no longer create separate tmux sessions per worker. Removed hash from session names — format is now `claude-team-{slug}` (e.g. `claude-team-pagedrop-infra`). All workers for the same project share one tmux session with separate windows.
+
 ## [0.8.0] - 2026-01-30
 
 ### Added
