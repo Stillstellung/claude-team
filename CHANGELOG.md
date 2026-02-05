@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-02-04
+
+### Fixed
+- **MCP tool optional param validation**: All 9 MCP tools now accept `null` for optional parameters with defaults. MCP clients (e.g. mcporter) that send explicit `null` for omitted params no longer trigger pydantic validation errors.
+
 ## [0.9.0] - 2026-02-03
 
 ### Added
