@@ -43,7 +43,7 @@ spawn_workers(workers=[
 
 **Key fields:**
 - `project_path`: Path to the repository (required)
-- `agent_type`: `"claude"` (default) or `"codex"` for OpenAI Codex CLI
+- `agent_type`: `"claude"` (default) or `"codex"` for OpenAI Codex CLI. **This field should not be specified unless explicitly requested by the user.** The default agent type is used unless override is required.
 - `bead`: The issue ID (Beads or Pebbles; shown on badge, used in branch naming)
 - `annotation`: Short task description (use the issue title for clarity)
 - `skip_permissions`: Set `True` — without this, workers can only read files
