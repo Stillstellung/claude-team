@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.2]
+
+- Fix Linux/non-macOS startup: if iTerm backend is selected implicitly but iTerm init fails, fall back to tmux when available.
+
 ## [0.11.1]
 
 - Fix PyPI distribution name: publish as `maniple-mcp` (PyPI rejects `maniple`).
