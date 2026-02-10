@@ -61,6 +61,40 @@ before loading the new agent.
   tail -f ~/.maniple/logs/maniple.err.log
   ```
 
+### Log rotation
+
+Maniple writes its primary logs to a rotating file at:
+
+```bash
+~/.maniple/logs/maniple.log
+```
+
+Rotation defaults (override via env vars):
+- `MANIPLE_LOG_MAX_SIZE_MB` (default: 10)
+- `MANIPLE_LOG_BACKUP_COUNT` (default: 5)
+- `MANIPLE_LOG_LEVEL` (default: INFO)
+- `MANIPLE_STDERR_LOG_LEVEL` (default: WARNING)
+
+If you still see unbounded growth in the launchd-captured files
+(`maniple.out.log` / `maniple.err.log`), you can rotate them using `newsyslog`.
+Example (rotate at ~10MB, keep 7, compress):
+
+```bash
+# /etc/newsyslog.d/maniple.conf
+~/.maniple/logs/maniple.out.log  644  7  10240  *  J
+~/.maniple/logs/maniple.err.log  644  7  10240  *  J
+```
+
+### Event backup pruning
+
+Event log rotation produces backup shards under `~/.maniple/` named like
+`events.2026-01-28.jsonl`. To prune old backups:
+
+```bash
+uv run python -m maniple_mcp events prune --keep-days 14 --max-total-size-mb 512
+uv run python -m maniple_mcp events prune --keep-days 14 --max-total-size-mb 512 --apply
+```
+
 ## Uninstall
 
 ```bash

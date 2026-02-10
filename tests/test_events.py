@@ -1,6 +1,6 @@
 """Tests for event log persistence."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import json
 import multiprocessing
 import os
@@ -237,6 +237,77 @@ class TestEventLogPersistence:
         assert worker_ids == {"active-old", "recent-idle"}
         assert snapshot["data"]["count"] == 2
 
+    def test_rotate_events_log_keeps_only_latest_snapshot_and_honors_size_cap(
+        self, tmp_path, monkeypatch
+    ):
+        """Size rotation should not retain unbounded snapshot history for active workers."""
+        path = tmp_path / "events.jsonl"
+        monkeypatch.setattr(events, "get_events_path", lambda: path)
+
+        now = datetime(2026, 1, 28, 12, 0, tzinfo=timezone.utc)
+        base = datetime(2026, 1, 28, 0, 0, tzinfo=timezone.utc)
+        filler = "x" * 60_000
+
+        lines = []
+        for i in range(30):
+            ts = base + timedelta(minutes=i)
+            lines.append(
+                json.dumps(
+                    {
+                        "ts": _isoformat_zulu(ts),
+                        "type": "snapshot",
+                        "worker_id": None,
+                        "data": {
+                            "count": 1,
+                            "workers": [
+                                {"session_id": "active-forever", "state": "active", "filler": filler}
+                            ],
+                        },
+                    }
+                )
+            )
+
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        os.utime(path, (now.timestamp(), now.timestamp()))
+        assert path.stat().st_size > 1024 * 1024
+
+        events.rotate_events_log(max_size_mb=1, recent_hours=24, now=now)
+
+        retained = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+        snapshots = [payload for payload in retained if payload.get("type") == "snapshot"]
+        assert len(snapshots) == 1
+        assert snapshots[0]["ts"] == _isoformat_zulu(base + timedelta(minutes=29))
+        assert path.stat().st_size <= 1024 * 1024
+
+    def test_append_event_rotates_when_incoming_write_would_exceed_cap(
+        self, tmp_path, monkeypatch
+    ):
+        """append_event should rotate before writing if the batch would cross max_size_mb."""
+        path = tmp_path / "events.jsonl"
+        monkeypatch.setattr(events, "get_events_path", lambda: path)
+        monkeypatch.setattr(
+            events,
+            "_load_rotation_config",
+            lambda: EventsConfig(max_size_mb=1, recent_hours=0),
+        )
+
+        base = datetime(2026, 1, 28, 10, 0, tzinfo=timezone.utc)
+        path.write_bytes(b"x" * (1024 * 1024 - 10))
+        os.utime(path, (base.timestamp(), base.timestamp()))
+
+        events.append_event(
+            WorkerEvent(
+                ts=_isoformat_zulu(base.replace(minute=1)),
+                type="worker_started",
+                worker_id="new-worker",
+                data={"state": "active"},
+            )
+        )
+
+        backup = path.with_name("events.2026-01-28.jsonl")
+        assert backup.exists()
+        assert path.read_text(encoding="utf-8").count("\n") == 1
+
     def test_rotate_events_log_uses_config_defaults(self, tmp_path, monkeypatch):
         """Config should supply rotation defaults when env overrides are missing."""
         config = ClaudeTeamConfig(events=EventsConfig(max_size_mb=2, recent_hours=0))
@@ -329,3 +400,31 @@ class TestEventLogPersistence:
         rotation = events._load_rotation_config()
         assert rotation.max_size_mb == 3
         assert rotation.recent_hours == 11
+
+    def test_prune_event_backups_keep_days(self, tmp_path, monkeypatch):
+        """prune_event_backups should delete backups older than keep_days."""
+        path = tmp_path / "events.jsonl"
+        monkeypatch.setattr(events, "get_events_path", lambda: path)
+        path.write_text("", encoding="utf-8")
+
+        b1 = tmp_path / "events.2026-01-01.jsonl"
+        b2 = tmp_path / "events.2026-01-02.jsonl"
+        b3 = tmp_path / "events.2026-01-03.jsonl"
+        b1.write_bytes(b"a" * 10)
+        b2.write_bytes(b"b" * 10)
+        b3.write_bytes(b"c" * 10)
+
+        os.utime(b1, (datetime(2026, 1, 1, tzinfo=timezone.utc).timestamp(),) * 2)
+        os.utime(b2, (datetime(2026, 1, 2, tzinfo=timezone.utc).timestamp(),) * 2)
+        os.utime(b3, (datetime(2026, 1, 3, tzinfo=timezone.utc).timestamp(),) * 2)
+
+        report = events.prune_event_backups(
+            keep_days=1,
+            now=datetime(2026, 1, 4, tzinfo=timezone.utc),
+            dry_run=False,
+        )
+
+        assert report.deleted_count == 2
+        assert not b1.exists()
+        assert not b2.exists()
+        assert b3.exists()

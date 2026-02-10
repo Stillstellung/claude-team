@@ -18,24 +18,13 @@ from mcp.server.session import ServerSession
 from maniple.events import get_latest_snapshot, read_events_since
 from maniple.poller import WorkerPoller
 
+from .logging_setup import configure_logging
 from .registry import RecoveryReport, SessionRegistry
 from .terminal_backends import ItermBackend, TerminalBackend, TmuxBackend, select_backend_id
 from .tools import register_all_tools
 from .utils import error_response, HINTS
 
-# Configure logging
-logging.basicConfig(
-    level=logging.DEBUG,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
 logger = logging.getLogger("maniple")
-# Add file handler for debugging
-_fh = logging.FileHandler("/tmp/maniple-debug.log")
-_fh.setLevel(logging.DEBUG)
-_fh.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
-logger.addHandler(_fh)
-logging.getLogger().addHandler(_fh)  # Also capture root logger
-logger.info("=== Maniple MCP Server Starting ===")
 
 
 # =============================================================================
@@ -470,13 +459,14 @@ def run_server(transport: str = "stdio", port: int = 8766):
         transport: Transport mode - "stdio" or "streamable-http"
         port: Port for HTTP transport (default 8766)
     """
+    log_path = configure_logging()
     if transport == "streamable-http":
-        logger.info(f"Starting Maniple MCP Server (HTTP on port {port})...")
+        logger.info("Starting Maniple MCP Server (HTTP on port %s). Logs: %s", port, log_path)
         # Create server with configured port for HTTP mode
         server = create_mcp_server(host="127.0.0.1", port=port, enable_poller=True)
         server.run(transport="streamable-http")
     else:
-        logger.info("Starting Maniple MCP Server (stdio)...")
+        logger.info("Starting Maniple MCP Server (stdio). Logs: %s", log_path)
         mcp.run(transport="stdio")
 
 
@@ -535,6 +525,34 @@ def main():
     set_parser.add_argument("key", help="Dotted config key (e.g. defaults.layout)")
     set_parser.add_argument("value", help="Value to set")
 
+    events_parser = subparsers.add_parser(
+        "events",
+        help="Manage event log backups",
+    )
+    events_subparsers = events_parser.add_subparsers(dest="events_command")
+
+    prune_parser = events_subparsers.add_parser(
+        "prune",
+        help="Prune rotated event log backups (events.*.jsonl)",
+    )
+    prune_parser.add_argument(
+        "--keep-days",
+        type=int,
+        default=None,
+        help="Delete backups older than this many days (by mtime).",
+    )
+    prune_parser.add_argument(
+        "--max-total-size-mb",
+        type=int,
+        default=None,
+        help="Cap total backup size by deleting oldest backups first.",
+    )
+    prune_parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="Actually delete files (default: dry run).",
+    )
+
     args = parser.parse_args()
 
     # Handle config subcommands early to avoid starting the server.
@@ -565,6 +583,23 @@ def main():
         except ConfigError as exc:
             print(f"Error: {exc}", file=sys.stderr)
             raise SystemExit(1) from exc
+        return
+
+    if args.command == "events":
+        from maniple.events import prune_event_backups
+
+        report = prune_event_backups(
+            keep_days=args.keep_days,
+            max_total_size_mb=args.max_total_size_mb,
+            dry_run=not args.apply,
+        )
+        for path in report.deleted_paths:
+            print(path)
+        action = "Would delete" if not args.apply else "Deleted"
+        print(
+            f"{action} {report.deleted_count} backup(s). "
+            f"Kept {report.kept_count} backup(s)."
+        )
         return
 
     # Default behavior: run the MCP server.
