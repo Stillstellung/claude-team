@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.1]
+
+- Fix PyPI distribution name: publish as `maniple-mcp` (PyPI rejects `maniple`).
+
 ## [0.11.0] - 2026-02-10
 
 ### Changed
