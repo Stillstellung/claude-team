@@ -403,10 +403,10 @@ class TestRecoverFromEventsClosedSessions:
 
         sessions = registry.list_all()
         assert sessions[0].event_state == "closed"
-        assert sessions[0].status == SessionStatus.BUSY
+        assert sessions[0].status == SessionStatus.READY
 
-    def test_closed_maps_to_busy_status(self):
-        """Closed workers should have status BUSY (last known working state)."""
+    def test_closed_maps_to_ready_status(self):
+        """Closed workers should have status READY (not counted as active)."""
         registry = SessionRegistry()
         now = datetime.now(timezone.utc)
 
@@ -420,8 +420,8 @@ class TestRecoverFromEventsClosedSessions:
         registry.recover_from_events(snapshot, events=[])
 
         sessions = registry.list_all()
-        assert sessions[0].status == SessionStatus.BUSY
-        assert sessions[0].is_idle() is False
+        assert sessions[0].status == SessionStatus.READY
+        assert sessions[0].is_idle() is True
 
 
 class TestRecoverFromEventsEmptyInput:

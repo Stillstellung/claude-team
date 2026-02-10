@@ -134,7 +134,7 @@ class RecoveredSession:
         project_path: Directory where the worker was running
         terminal_id: Terminal identifier from snapshot (may be stale)
         agent_type: "claude" or "codex"
-        status: Mapped SessionStatus (READY for idle, BUSY for active/closed)
+        status: Mapped SessionStatus (READY for idle/closed, BUSY for active)
         last_activity: Last activity timestamp from snapshot
         created_at: Session creation timestamp from snapshot
         event_state: Raw state from event log ("idle", "active", or "closed")
@@ -172,10 +172,9 @@ class RecoveredSession:
         Returns:
             Corresponding SessionStatus
         """
-        if event_state == "idle":
+        if event_state in {"idle", "closed"}:
             return SessionStatus.READY
-        # Both "active" and "closed" map to BUSY
-        # (closed sessions were last known to be working)
+        # Only "active" maps to BUSY.
         return SessionStatus.BUSY
 
     def to_dict(self) -> dict:
@@ -215,9 +214,9 @@ class RecoveredSession:
         It relies solely on the event_state from the snapshot.
 
         Returns:
-            True if event_state is "idle", False otherwise
+            True if event_state is "idle" or "closed", False otherwise
         """
-        return self.event_state == "idle"
+        return self.event_state in {"idle", "closed"}
 
 
 @dataclass

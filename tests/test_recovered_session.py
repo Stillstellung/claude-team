@@ -216,8 +216,8 @@ class TestRecoveredSessionIsIdle:
         )
         assert session.is_idle() is False
 
-    def test_is_idle_returns_false_for_closed_state(self):
-        """is_idle() returns False when event_state is 'closed'."""
+    def test_is_idle_returns_true_for_closed_state(self):
+        """is_idle() returns True when event_state is 'closed'."""
         now = datetime.now()
         session = RecoveredSession(
             session_id="abc12345",
@@ -225,14 +225,14 @@ class TestRecoveredSessionIsIdle:
             project_path="/Users/test/project",
             terminal_id=None,
             agent_type="claude",
-            status=SessionStatus.BUSY,
+            status=SessionStatus.READY,
             last_activity=now,
             created_at=now,
             event_state="closed",
             recovered_at=now,
             last_event_ts=now,
         )
-        assert session.is_idle() is False
+        assert session.is_idle() is True
 
 
 class TestRecoveredSessionStateMapping:
@@ -248,10 +248,10 @@ class TestRecoveredSessionStateMapping:
         result = RecoveredSession.map_event_state_to_status("active")
         assert result == SessionStatus.BUSY
 
-    def test_closed_maps_to_busy(self):
-        """Event state 'closed' maps to SessionStatus.BUSY."""
+    def test_closed_maps_to_ready(self):
+        """Event state 'closed' maps to SessionStatus.READY."""
         result = RecoveredSession.map_event_state_to_status("closed")
-        assert result == SessionStatus.BUSY
+        assert result == SessionStatus.READY
 
 
 class TestRecoveredSessionFrozenImmutability:
