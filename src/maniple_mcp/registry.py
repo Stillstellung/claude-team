@@ -764,7 +764,7 @@ class SessionRegistry:
             PruneReport summarizing what was pruned/emitted.
         """
         now = datetime.now(timezone.utc)
-        if backend.backend_id != "tmux":
+        if backend.backend_id not in ("tmux", "iterm"):
             return PruneReport(
                 pruned=0,
                 emitted_closed=0,
@@ -773,36 +773,39 @@ class SessionRegistry:
             )
 
         errors: list[str] = []
-        pane_ids: set[str] | None = None
+        terminal_native_ids: set[str] | None = None
         try:
-            panes = await backend.list_sessions()
-            pane_ids = {pane.native_id for pane in panes}
+            sessions = await backend.list_sessions()
+            terminal_native_ids = {sess.native_id for sess in sessions}
         except Exception as exc:  # pragma: no cover - defensive
             # Best-effort: fall back to worktree existence checks.
-            errors.append(f"tmux list_sessions failed: {exc}")
-            pane_ids = None
+            errors.append(f"{backend.backend_id} list_sessions failed: {exc}")
+            terminal_native_ids = None
 
-        def _pane_exists(session: RecoveredSession) -> bool | None:
-            if pane_ids is None:
+        def _terminal_exists(session: RecoveredSession) -> bool | None:
+            if terminal_native_ids is None:
                 return None
             terminal_id = session.terminal_id
             if terminal_id is None:
                 return None
-            if terminal_id.backend_id != "tmux":
+            if terminal_id.backend_id != backend.backend_id:
                 return None
-            return terminal_id.native_id in pane_ids
+            return terminal_id.native_id in terminal_native_ids
 
         # Batch events for a single atomic append.
         to_emit: list["WorkerEvent"] = []
         pruned_ids: list[str] = []
 
         for session_id, recovered in list(self._recovered_sessions.items()):
-            pane_exists = _pane_exists(recovered)
+            if recovered.event_state == "closed":
+                continue
+
+            terminal_exists = _terminal_exists(recovered)
             stale = False
 
-            if pane_exists is False:
+            if terminal_exists is False:
                 stale = True
-            elif pane_exists is None:
+            elif terminal_exists is None:
                 # Only prune using worktree when we *can't* check terminal existence.
                 if recovered.worktree_path:
                     try:
