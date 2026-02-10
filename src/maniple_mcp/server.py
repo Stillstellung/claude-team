@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.session import ServerSession
 
-from maniple.events import get_latest_snapshot, read_events_since
+from maniple.events import get_latest_snapshot, prune_event_backups, read_events_since
 from maniple.poller import WorkerPoller
 
 from .logging_setup import configure_logging
@@ -25,6 +25,8 @@ from .tools import register_all_tools
 from .utils import error_response, HINTS
 
 logger = logging.getLogger("maniple")
+
+EVENT_BACKUP_CAP_MB = 200
 
 
 # =============================================================================
@@ -70,6 +72,13 @@ def recover_registry(registry: SessionRegistry) -> RecoveryReport | None:
     """
     global _recovery_attempted
     _recovery_attempted = True
+
+    # Best-effort pruning of rotated backup shards so ~/.maniple doesn't grow
+    # without bound. Never touches the live events.jsonl.
+    try:
+        prune_event_backups(max_total_size_mb=EVENT_BACKUP_CAP_MB, dry_run=False)
+    except Exception:
+        logger.exception("Failed to prune event log backups")
 
     # Get the latest snapshot from the event log.
     snapshot = get_latest_snapshot()

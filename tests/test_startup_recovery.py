@@ -361,6 +361,36 @@ class TestStartupRecoveryFlow:
         # Only 1 session should be added.
         assert len(registry.list_all()) == 1
 
+    def test_recover_registry_prunes_rotated_backups(self, tmp_path, monkeypatch):
+        """recover_registry should prune rotated backup shards and never touch events.jsonl."""
+        import maniple.events as events_module
+
+        events_path = tmp_path / "events.jsonl"
+        events_path.write_text("{\"ts\":\"2026-01-01T00:00:00Z\",\"type\":\"worker_started\",\"worker_id\":\"w1\",\"data\":{}}\n", encoding="utf-8")
+
+        # Create backups that should be pruned.
+        b1 = tmp_path / "events.2026-01-01.jsonl"
+        b2 = tmp_path / "events.2026-01-02.jsonl"
+        b1.write_bytes(b"a" * 2048)
+        b2.write_bytes(b"b" * 2048)
+
+        monkeypatch.setattr(events_module, "get_events_path", lambda: events_path)
+        monkeypatch.setattr(server_module, "EVENT_BACKUP_CAP_MB", 0)
+
+        original = events_path.read_text(encoding="utf-8")
+
+        with (
+            patch.object(server_module, "get_latest_snapshot", return_value=None),
+            patch.object(server_module, "read_events_since", return_value=[]),
+        ):
+            report = server_module.recover_registry(SessionRegistry())
+
+        assert report is None
+        assert not b1.exists()
+        assert not b2.exists()
+        assert events_path.exists()
+        assert events_path.read_text(encoding="utf-8") == original
+
     def test_lifespan_recovery_called_if_not_attempted(self):
         """The lifespan should call recover_registry if not already attempted."""
         # This tests the pattern used in app_lifespan.
