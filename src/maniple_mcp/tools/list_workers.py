@@ -62,6 +62,11 @@ def register_tools(mcp: FastMCP) -> None:
                     report.skipped,
                     report.closed,
                 )
+                # Prune stale recovered sessions so ghosts don't appear as active.
+                try:
+                    await registry.prune_stale_recovered_sessions(app_ctx.terminal_backend)
+                except Exception as exc:  # pragma: no cover - defensive
+                    logger.warning("Failed to prune stale recovered sessions after lazy recovery: %s", exc)
 
         # Get sessions, optionally filtered by status
         if status_filter:

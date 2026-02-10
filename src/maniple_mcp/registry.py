@@ -8,7 +8,7 @@ our session IDs, terminal session handles, and Claude JSONL session IDs.
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
@@ -22,7 +22,7 @@ from .session_state import (
     get_project_dir,
     parse_session,
 )
-from .terminal_backends import TerminalSession
+from .terminal_backends import TerminalBackend, TerminalSession
 
 # Type alias for supported agent types
 AgentType = Literal["claude", "codex"]
@@ -94,6 +94,26 @@ class RecoveryReport:
     skipped: int
     closed: int
     timestamp: datetime
+
+
+@dataclass(frozen=True)
+class PruneReport:
+    """
+    Report from SessionRegistry.prune_stale_recovered_sessions().
+
+    Attributes:
+        pruned: Number of recovered sessions that were pruned (marked closed)
+        emitted_closed: Number of worker_closed events emitted to the event log
+        timestamp: When pruning occurred
+        session_ids: Tuple of session IDs that were pruned
+        errors: Any non-fatal errors encountered (best-effort pruning)
+    """
+
+    pruned: int
+    emitted_closed: int
+    timestamp: datetime
+    session_ids: tuple[str, ...]
+    errors: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -720,6 +740,124 @@ class SessionRegistry:
             skipped=skipped,
             closed=closed,
             timestamp=now,
+        )
+
+    async def prune_stale_recovered_sessions(
+        self,
+        backend: TerminalBackend,
+    ) -> PruneReport:
+        """
+        Prune stale recovered sessions by emitting worker_closed events.
+
+        This targets recovered sessions (source=event_log) that are showing up as
+        active/idle but whose underlying terminal pane no longer exists.
+
+        Pruning rules (tmux backend only):
+        1) If terminal backend is tmux and the session's tmux pane does NOT exist:
+           emit worker_closed(reason=stale_recovered) (regardless of worktree).
+        2) If terminal existence cannot be checked for the session and worktree_path
+           is set-but-missing: emit worker_closed(reason=stale_recovered).
+        3) Do NOT prune solely because worktree_path is missing when worktree_path is
+           null/empty (use_worktree=false) OR when the tmux pane still exists.
+
+        Returns:
+            PruneReport summarizing what was pruned/emitted.
+        """
+        now = datetime.now(timezone.utc)
+        if backend.backend_id != "tmux":
+            return PruneReport(
+                pruned=0,
+                emitted_closed=0,
+                timestamp=now,
+                session_ids=(),
+            )
+
+        errors: list[str] = []
+        pane_ids: set[str] | None = None
+        try:
+            panes = await backend.list_sessions()
+            pane_ids = {pane.native_id for pane in panes}
+        except Exception as exc:  # pragma: no cover - defensive
+            # Best-effort: fall back to worktree existence checks.
+            errors.append(f"tmux list_sessions failed: {exc}")
+            pane_ids = None
+
+        def _pane_exists(session: RecoveredSession) -> bool | None:
+            if pane_ids is None:
+                return None
+            terminal_id = session.terminal_id
+            if terminal_id is None:
+                return None
+            if terminal_id.backend_id != "tmux":
+                return None
+            return terminal_id.native_id in pane_ids
+
+        # Batch events for a single atomic append.
+        to_emit: list["WorkerEvent"] = []
+        pruned_ids: list[str] = []
+
+        for session_id, recovered in list(self._recovered_sessions.items()):
+            pane_exists = _pane_exists(recovered)
+            stale = False
+
+            if pane_exists is False:
+                stale = True
+            elif pane_exists is None:
+                # Only prune using worktree when we *can't* check terminal existence.
+                if recovered.worktree_path:
+                    try:
+                        if not Path(recovered.worktree_path).exists():
+                            stale = True
+                    except Exception as exc:  # pragma: no cover - defensive
+                        errors.append(f"worktree_path check failed for {session_id}: {exc}")
+
+            if not stale:
+                continue
+
+            # Emit worker_closed to correct the event log state.
+            from maniple.events import WorkerEvent as _WorkerEvent
+
+            ts = now.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            payload = recovered.to_dict()
+            payload.update(
+                {
+                    "reason": "stale_recovered",
+                    "state": "closed",
+                    "previous_state": recovered.event_state,
+                }
+            )
+            to_emit.append(
+                _WorkerEvent(
+                    ts=ts,
+                    type="worker_closed",
+                    worker_id=session_id,
+                    data=payload,
+                )
+            )
+
+            # Update in-memory recovered state so list_workers stops reporting it as active.
+            self._recovered_sessions[session_id] = replace(
+                recovered,
+                event_state="closed",
+                status=RecoveredSession.map_event_state_to_status("closed"),
+                last_event_ts=now,
+            )
+            pruned_ids.append(session_id)
+
+        if to_emit:
+            try:
+                from maniple.events import append_events
+
+                append_events(to_emit)
+            except Exception as exc:  # pragma: no cover - defensive
+                errors.append(f"append_events failed: {exc}")
+
+        return PruneReport(
+            pruned=len(pruned_ids),
+            emitted_closed=len(to_emit),
+            timestamp=now,
+            session_ids=tuple(pruned_ids),
+            errors=tuple(errors),
         )
 
     def _parse_event_timestamp(self, ts_str: str | None) -> datetime:

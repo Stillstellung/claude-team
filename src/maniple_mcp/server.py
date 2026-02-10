@@ -287,6 +287,17 @@ async def app_lifespan(
                 report.skipped,
                 report.closed,
             )
+            # Prune stale recovered sessions (tmux panes that no longer exist).
+            try:
+                prune_report = await ctx.registry.prune_stale_recovered_sessions(ctx.terminal_backend)
+                if prune_report.pruned:
+                    logger.info(
+                        "Pruned stale recovered sessions: pruned=%d emitted_closed=%d",
+                        prune_report.pruned,
+                        prune_report.emitted_closed,
+                    )
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.warning("Failed to prune stale recovered sessions: %s", exc)
         else:
             logger.info("No event log data available for recovery")
 
